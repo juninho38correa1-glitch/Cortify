@@ -143,6 +143,8 @@ function showView(view, opts = {}) {
     renderDashboard();
   } else if (view === "pacotes") {
     renderPacotes();
+  } else if (view === "agenda") {
+    renderAgenda();
   } else if (view === "conta") {
     renderConta();
   }
@@ -171,15 +173,43 @@ function renderDashboard() {
   // Stats hoje
   const hoje = new Date();
   hoje.setHours(0, 0, 0, 0);
+  const amanha = new Date(hoje);
+  amanha.setDate(amanha.getDate() + 1);
 
-  sb.from("atendimentos")
-    .select("valor_avulso, pago_via_pacote")
-    .gte("data", hoje.toISOString())
-    .then(({ data }) => {
-      const fat = (data || []).reduce((acc, a) => acc + (a.valor_avulso ? Number(a.valor_avulso) : 0), 0);
-      document.getElementById("statFaturamento").textContent = bf.formatBRL(fat);
-      document.getElementById("statAtendimentos").textContent = (data || []).length;
-    });
+  // Busca dados do dia em paralelo
+  Promise.all([
+    sb.from("atendimentos")
+      .select("valor_avulso, pago_via_pacote")
+      .gte("data", hoje.toISOString())
+      .lt("data", amanha.toISOString()),
+    sb.from("pacotes")
+      .select("valor_total")
+      .gte("created_at", hoje.toISOString())
+      .lt("created_at", amanha.toISOString())
+      .eq("pago", true),
+  ]).then(([atendRes, pkgRes]) => {
+    const atendimentos = atendRes.data || [];
+    const pacotesVendidos = pkgRes.data || [];
+
+    // Faturamento real do dia: avulso + venda de pacote
+    const fatAvulso = atendimentos.reduce((acc, a) => acc + (a.valor_avulso ? Number(a.valor_avulso) : 0), 0);
+    const fatPacote = pacotesVendidos.reduce((acc, p) => acc + Number(p.valor_total), 0);
+    const fatTotal = fatAvulso + fatPacote;
+
+    document.getElementById("statFaturamento").textContent = bf.formatBRL(fatTotal);
+
+    // Mostra detalhamento se tiver venda de pacote
+    const foot = document.getElementById("statFaturamentoFoot");
+    if (foot) {
+      if (fatPacote > 0) {
+        foot.textContent = `${bf.formatBRL(fatAvulso)} avulso + ${bf.formatBRL(fatPacote)} pacote`;
+      } else {
+        foot.textContent = "";
+      }
+    }
+
+    document.getElementById("statAtendimentos").textContent = atendimentos.length;
+  });
 
   document.getElementById("statClientes").textContent = state.clientes.length;
   document.getElementById("statPacotes").textContent = state.pacotes.length;
@@ -801,6 +831,377 @@ function renderConta() {
   `;
 }
 
+// ========== AGENDA ==========
+
+let agendaCurrentDate = new Date();
+
+function changeAgendaDay(delta) {
+  agendaCurrentDate.setDate(agendaCurrentDate.getDate() + delta);
+  renderAgenda();
+}
+
+function goToToday() {
+  agendaCurrentDate = new Date();
+  renderAgenda();
+}
+
+async function renderAgenda() {
+  const dateLabel = document.getElementById("agendaDateLabel");
+  const list = document.getElementById("agendaList");
+  const count = document.getElementById("agendaCount");
+
+  const inicio = new Date(agendaCurrentDate);
+  inicio.setHours(0, 0, 0, 0);
+  const fim = new Date(agendaCurrentDate);
+  fim.setHours(23, 59, 59, 999);
+
+  // Label do dia
+  const hoje = new Date();
+  hoje.setHours(0, 0, 0, 0);
+  const diff = Math.round((inicio - hoje) / (1000 * 60 * 60 * 24));
+  let prefixo = "";
+  if (diff === 0) prefixo = "Hoje · ";
+  else if (diff === 1) prefixo = "Amanhã · ";
+  else if (diff === -1) prefixo = "Ontem · ";
+
+  dateLabel.textContent = prefixo + agendaCurrentDate.toLocaleDateString("pt-BR", {
+    weekday: "long", day: "numeric", month: "long",
+  });
+
+  list.innerHTML = `<div style="padding:40px;text-align:center;color:var(--text-soft)">Carregando...</div>`;
+
+  const { data, error } = await sb
+    .from("agendamentos")
+    .select("*, cliente:clientes(id, nome, telefone), servico:servicos(nome, preco)")
+    .gte("inicio", inicio.toISOString())
+    .lte("inicio", fim.toISOString())
+    .order("inicio", { ascending: true });
+
+  if (error) {
+    list.innerHTML = `<div style="color:var(--red);padding:20px">Erro: ${error.message}</div>`;
+    return;
+  }
+
+  // Conta pacotes ativos por cliente pra mostrar badge
+  const clienteIds = (data || []).map(a => a.cliente_id);
+  let pacotesPorCliente = {};
+  if (clienteIds.length > 0) {
+    const { data: pks } = await sb.from("pacotes")
+      .select("cliente_id, id, nome, itens:pacote_itens(quantidade_total, quantidade_usada, servico_id)")
+      .in("cliente_id", clienteIds)
+      .eq("status", "ATIVO");
+    (pks || []).forEach(p => {
+      if (!pacotesPorCliente[p.cliente_id]) pacotesPorCliente[p.cliente_id] = [];
+      pacotesPorCliente[p.cliente_id].push(p);
+    });
+  }
+
+  count.textContent = `${(data || []).length} ${(data || []).length === 1 ? "agendamento" : "agendamentos"}`;
+
+  if (!data || data.length === 0) {
+    list.innerHTML = `
+      <div class="empty">
+        <div class="empty-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/></svg>
+        </div>
+        <h2>Sem agendamentos ${diff === 0 ? "hoje" : "neste dia"}</h2>
+        <p>Que tal já agendar o próximo cliente?</p>
+        <button class="btn btn-primary" onclick="openAgendamentoModal()">+ Novo agendamento</button>
+      </div>
+    `;
+    return;
+  }
+
+  list.innerHTML = data.map(a => {
+    const dt = new Date(a.inicio);
+    const fim = new Date(a.fim);
+    const horario = dt.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+    const horarioFim = fim.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+    const isFinalizado = a.status === "FINALIZADO";
+    const isCancelado = a.status === "CANCELADO" || a.status === "FALTOU";
+
+    // Verifica se cliente tem pacote ativo desse serviço
+    const pacotesCliente = pacotesPorCliente[a.cliente_id] || [];
+    const pacoteCobre = pacotesCliente.find(p =>
+      p.itens.some(i => i.servico_id === a.servico_id && i.quantidade_usada < i.quantidade_total)
+    );
+
+    return `
+      <div class="card" style="margin-bottom:10px;${isFinalizado ? 'opacity:0.6' : ''}${isCancelado ? 'opacity:0.4' : ''}">
+        <div style="display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap">
+          <div style="font-family:'Playfair Display';font-size:24px;font-weight:700;color:${isFinalizado ? 'var(--green)' : 'var(--gold)'};min-width:80px">
+            ${horario}
+            <div style="font-size:10px;color:var(--text-dim);font-family:Inter;letter-spacing:1px;text-transform:uppercase;margin-top:2px">até ${horarioFim}</div>
+          </div>
+          <div style="flex:1;min-width:200px">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <div style="font-size:15px;font-weight:600">${escapeHtml(a.cliente?.nome || "?")}</div>
+              ${isFinalizado ? '<span class="pill pill-green">Finalizado</span>' : ''}
+              ${isCancelado ? `<span class="pill pill-red">${a.status}</span>` : ''}
+              ${pacoteCobre && !isFinalizado && !isCancelado ? `
+                <span class="pill pill-gold" style="font-size:10px">
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+                  Tem pacote
+                </span>
+              ` : ''}
+            </div>
+            <div style="font-size:12px;color:var(--text-soft);margin-top:4px">
+              ${escapeHtml(a.servico?.nome || "?")} · ${bf.formatBRL(a.servico?.preco || 0)}
+            </div>
+            ${a.observacao ? `<div style="font-size:11px;color:var(--text-dim);margin-top:4px;font-style:italic">"${escapeHtml(a.observacao)}"</div>` : ''}
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            ${!isFinalizado && !isCancelado ? `
+              <a href="${bf.whatsappLink(a.cliente?.telefone, `Oi ${a.cliente?.nome?.split(' ')[0] || ''}, lembrando do seu horário às ${horario}!`)}" target="_blank" class="icon-btn" title="WhatsApp">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+              </a>
+              <button class="btn btn-ghost btn-sm" onclick='openAgendamentoModal(${escapeJsonForAttr(a)})'>Editar</button>
+              <button class="btn btn-success btn-sm" onclick='openFinalizarModal(${escapeJsonForAttr({ ...a, _pacoteCobre: pacoteCobre })})'>
+                ✓ Finalizar
+              </button>
+            ` : ''}
+          </div>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+// ========== MODAL AGENDAMENTO ==========
+function openAgendamentoModal(agendamento = null) {
+  const form = document.getElementById("agendamentoForm");
+  const title = document.getElementById("agendamentoModalTitle");
+  const deleteBtn = document.getElementById("deleteAgBtn");
+
+  form.reset();
+
+  // Popula selects
+  const clienteSel = document.getElementById("agClienteSelect");
+  clienteSel.innerHTML = `<option value="">Selecione...</option>` +
+    state.clientes.map(c => `<option value="${c.id}">${escapeHtml(c.nome)}</option>`).join("");
+
+  const servicoSel = document.getElementById("agServicoSelect");
+  servicoSel.innerHTML = `<option value="">Selecione...</option>` +
+    state.servicos.map(s => `<option value="${s.id}">${escapeHtml(s.nome)} · ${bf.formatBRL(s.preco)}</option>`).join("");
+
+  if (agendamento) {
+    title.textContent = "Editar agendamento";
+    deleteBtn.style.display = "inline-flex";
+    deleteBtn.dataset.id = agendamento.id;
+
+    const inicio = new Date(agendamento.inicio);
+    const fim = new Date(agendamento.fim);
+    const duracao = Math.round((fim - inicio) / (1000 * 60));
+
+    form.id.value = agendamento.id;
+    form.cliente_id.value = agendamento.cliente_id;
+    form.servico_id.value = agendamento.servico_id;
+    form.data.value = inicio.toISOString().split("T")[0];
+    form.horario.value = inicio.toTimeString().slice(0, 5);
+    form.duracao.value = duracao;
+    form.observacao.value = agendamento.observacao || "";
+  } else {
+    title.textContent = "Novo agendamento";
+    deleteBtn.style.display = "none";
+    form.id.value = "";
+    // Preenche com a data da agenda atual
+    form.data.value = agendaCurrentDate.toISOString().split("T")[0];
+    form.duracao.value = 30;
+  }
+
+  document.getElementById("agendamentoModal").classList.add("open");
+}
+
+async function saveAgendamento(e) {
+  e.preventDefault();
+  const btn = document.getElementById("agSaveBtn");
+  btn.disabled = true;
+  btn.textContent = "Salvando...";
+
+  const fd = new FormData(e.target);
+  const data = fd.get("data");
+  const horario = fd.get("horario");
+  const duracao = parseInt(fd.get("duracao"));
+
+  const inicio = new Date(`${data}T${horario}:00`);
+  const fim = new Date(inicio.getTime() + duracao * 60 * 1000);
+
+  const payload = {
+    user_id: state.user.id,
+    cliente_id: fd.get("cliente_id"),
+    servico_id: fd.get("servico_id"),
+    inicio: inicio.toISOString(),
+    fim: fim.toISOString(),
+    observacao: fd.get("observacao")?.trim() || null,
+  };
+
+  const id = fd.get("id");
+  let result;
+  if (id) {
+    result = await sb.from("agendamentos").update(payload).eq("id", id).select().single();
+  } else {
+    result = await sb.from("agendamentos").insert(payload).select().single();
+  }
+
+  btn.disabled = false;
+  btn.textContent = "Salvar";
+
+  if (result.error) {
+    bf.toast("Erro: " + result.error.message, "error");
+    return;
+  }
+
+  bf.toast(id ? "Agendamento atualizado" : "Agendamento criado", "success");
+  closeModal("agendamentoModal");
+
+  // Posiciona a agenda na data desse agendamento
+  agendaCurrentDate = new Date(data + "T12:00:00");
+  renderAgenda();
+}
+
+async function deleteAgendamento() {
+  const id = document.getElementById("deleteAgBtn").dataset.id;
+  if (!confirm("Excluir esse agendamento?")) return;
+
+  const { error } = await sb.from("agendamentos").delete().eq("id", id);
+  if (error) { bf.toast("Erro: " + error.message, "error"); return; }
+
+  bf.toast("Agendamento excluído", "success");
+  closeModal("agendamentoModal");
+  renderAgenda();
+}
+
+// ========== MODAL FINALIZAR ATENDIMENTO ==========
+function openFinalizarModal(ag) {
+  document.getElementById("finalizarSub").textContent =
+    `${ag.cliente?.nome} · ${new Date(ag.inicio).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
+
+  const pacote = ag._pacoteCobre;
+  const servicoNome = ag.servico?.nome || "Serviço";
+  const servicoPreco = ag.servico?.preco || 0;
+
+  let pacoteInfo = "";
+  if (pacote) {
+    const item = pacote.itens.find(i => i.servico_id === ag.servico_id && i.quantidade_usada < i.quantidade_total);
+    const restantes = item.quantidade_total - item.quantidade_usada;
+    pacoteInfo = `
+      <div style="background:rgba(212,168,87,0.08);border:1px solid rgba(212,168,87,0.25);border-radius:10px;padding:14px;margin-bottom:18px;display:flex;align-items:center;gap:12px">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--gold)" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+        <div style="flex:1">
+          <div style="font-size:13px;font-weight:600">${escapeHtml(pacote.nome)}</div>
+          <div style="font-size:11px;color:var(--text-soft);margin-top:2px">${restantes} ${servicoNome.toLowerCase()}${restantes !== 1 ? 's' : ''} restante${restantes !== 1 ? 's' : ''}</div>
+        </div>
+        <div style="font-family:'Playfair Display';font-size:22px;color:var(--gold);font-weight:700">${restantes}</div>
+      </div>
+    `;
+  }
+
+  document.getElementById("finalizarBody").innerHTML = `
+    ${pacoteInfo}
+    <div style="font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-dim);font-weight:600;margin-bottom:10px">Como o cliente pagou?</div>
+    <div style="display:grid;gap:10px">
+      ${pacote ? `
+        <button class="card-gold" style="text-align:left;border:1px solid rgba(212,168,87,0.5);background:rgba(212,168,87,0.06);cursor:pointer;font-family:inherit;color:var(--text)" onclick='confirmarFinalizar(${escapeJsonForAttr({ agendamento_id: ag.id, cliente_id: ag.cliente_id, servico_id: ag.servico_id, pago_via_pacote: true, pacote_id: pacote.id })})'>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+            <div style="font-weight:600;font-size:14px;display:flex;align-items:center;gap:8px">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--gold)" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+              Descontar do pacote
+            </div>
+            <span class="pill pill-gold" style="font-size:10px">Recomendado</span>
+          </div>
+          <div style="font-size:12px;color:var(--text-soft);line-height:1.5">Sem cobrança hoje. O contador do pacote vai descer 1.</div>
+        </button>
+      ` : ''}
+      <button class="card" style="text-align:left;cursor:pointer;font-family:inherit;color:var(--text);border-color:var(--line)" onclick='confirmarFinalizar(${escapeJsonForAttr({ agendamento_id: ag.id, cliente_id: ag.cliente_id, servico_id: ag.servico_id, valor_avulso: servicoPreco, forma_pagamento: "DINHEIRO" })})'>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+          <div style="font-weight:600;font-size:14px">💵 Cobrar avulso (Dinheiro)</div>
+          <div style="font-family:'Playfair Display';font-size:18px;font-weight:700;color:var(--gold)">${bf.formatBRL(servicoPreco)}</div>
+        </div>
+        <div style="font-size:12px;color:var(--text-soft)">${pacote ? 'Mantém o pacote intacto.' : 'Pagamento em dinheiro.'}</div>
+      </button>
+      <button class="card" style="text-align:left;cursor:pointer;font-family:inherit;color:var(--text);border-color:var(--line)" onclick='confirmarFinalizar(${escapeJsonForAttr({ agendamento_id: ag.id, cliente_id: ag.cliente_id, servico_id: ag.servico_id, valor_avulso: servicoPreco, forma_pagamento: "PIX" })})'>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+          <div style="font-weight:600;font-size:14px">💸 Cobrar avulso (PIX)</div>
+          <div style="font-family:'Playfair Display';font-size:18px;font-weight:700;color:var(--gold)">${bf.formatBRL(servicoPreco)}</div>
+        </div>
+      </button>
+      <button class="card" style="text-align:left;cursor:pointer;font-family:inherit;color:var(--text);border-color:var(--line)" onclick='confirmarFinalizar(${escapeJsonForAttr({ agendamento_id: ag.id, cliente_id: ag.cliente_id, servico_id: ag.servico_id, valor_avulso: servicoPreco, forma_pagamento: "CARTAO" })})'>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+          <div style="font-weight:600;font-size:14px">💳 Cobrar avulso (Cartão)</div>
+          <div style="font-family:'Playfair Display';font-size:18px;font-weight:700;color:var(--gold)">${bf.formatBRL(servicoPreco)}</div>
+        </div>
+      </button>
+    </div>
+    <div style="margin-top:18px;display:flex;justify-content:flex-end;gap:8px">
+      <button type="button" class="btn btn-danger btn-sm" onclick='cancelarAgendamento("${ag.id}")'>Marcar como faltou</button>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="closeModal('finalizarModal')">Fechar</button>
+    </div>
+  `;
+
+  document.getElementById("finalizarModal").classList.add("open");
+}
+
+async function confirmarFinalizar(payload) {
+  const data = {
+    user_id: state.user.id,
+    cliente_id: payload.cliente_id,
+    servico_id: payload.servico_id,
+    agendamento_id: payload.agendamento_id,
+    pago_via_pacote: payload.pago_via_pacote || false,
+    pacote_id: payload.pacote_id || null,
+    valor_avulso: payload.valor_avulso || null,
+    forma_pagamento: payload.forma_pagamento || null,
+  };
+
+  // Cria atendimento
+  const { data: atend, error: e1 } = await sb.from("atendimentos").insert(data).select().single();
+  if (e1) { bf.toast("Erro: " + e1.message, "error"); return; }
+
+  // Se foi via pacote, debita
+  if (payload.pago_via_pacote && payload.pacote_id) {
+    const { data: itens } = await sb.from("pacote_itens")
+      .select("*")
+      .eq("pacote_id", payload.pacote_id)
+      .eq("servico_id", payload.servico_id);
+
+    const item = (itens || []).find(i => i.quantidade_usada < i.quantidade_total);
+    if (item) {
+      await sb.from("pacote_consumos").insert({
+        pacote_id: payload.pacote_id,
+        pacote_item_id: item.id,
+        atendimento_id: atend.id,
+      });
+      await sb.from("pacote_itens").update({
+        quantidade_usada: item.quantidade_usada + 1,
+      }).eq("id", item.id);
+
+      // Verifica encerramento
+      const { data: itensAtualizados } = await sb.from("pacote_itens").select("*").eq("pacote_id", payload.pacote_id);
+      if (itensAtualizados.every(i => i.quantidade_usada >= i.quantidade_total)) {
+        await sb.from("pacotes").update({ status: "ENCERRADO" }).eq("id", payload.pacote_id);
+        bf.toast("Pacote encerrado! Hora de oferecer renovação 🎉", "success");
+      }
+    }
+  }
+
+  // Marca agendamento como finalizado
+  await sb.from("agendamentos").update({ status: "FINALIZADO" }).eq("id", payload.agendamento_id);
+
+  bf.toast("✓ Atendimento finalizado", "success");
+  closeModal("finalizarModal");
+  await loadInitialData();
+  renderAgenda();
+}
+
+async function cancelarAgendamento(id) {
+  if (!confirm("Marcar como falta? O cliente vai ficar marcado como ausente.")) return;
+  const { error } = await sb.from("agendamentos").update({ status: "FALTOU" }).eq("id", id);
+  if (error) { bf.toast("Erro: " + error.message, "error"); return; }
+  bf.toast("Marcado como falta", "success");
+  closeModal("finalizarModal");
+  renderAgenda();
+}
+
 // ========== LOGOUT ==========
 async function logout() {
   if (!confirm("Tem certeza que quer sair?")) return;
@@ -845,3 +1246,12 @@ window.selectPagamento = selectPagamento;
 window.consumirItem = consumirItem;
 window.renderClientes = renderClientes;
 window.logout = logout;
+// Agenda
+window.changeAgendaDay = changeAgendaDay;
+window.goToToday = goToToday;
+window.openAgendamentoModal = openAgendamentoModal;
+window.saveAgendamento = saveAgendamento;
+window.deleteAgendamento = deleteAgendamento;
+window.openFinalizarModal = openFinalizarModal;
+window.confirmarFinalizar = confirmarFinalizar;
+window.cancelarAgendamento = cancelarAgendamento;
