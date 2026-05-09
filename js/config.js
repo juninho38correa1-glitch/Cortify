@@ -24,5 +24,5 @@ window.APP_CONFIG = {
   // VAPID Public Key para Push Notifications
   // Gere com: npx web-push generate-vapid-keys
   // (deixe vazio se não quiser ativar push notifications ainda)
-  vapidPublicKey: ""
+  vapidPublicKey: "BAul5pB9TiGyaUUXKmPv3f90Prw6ApGvYLZ675COmu-1IPee6-Ah0doKcuVrIOTixfO09567Ro2heW2l4zKaA2A"
 };
