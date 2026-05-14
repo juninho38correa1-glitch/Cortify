@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Agendar — Cortify</title>
+<meta name="description" content="Agende seu horário online">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0a0a0a">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700;800;900&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/styles.css">
+<style>
+  body {
+    background: linear-gradient(180deg, #050505 0%, #0a0a0a 100%);
+    min-height: 100vh;
+    margin: 0;
+    padding: 0;
+  }
+
+  .public-container {
+    max-width: 600px;
+    margin: 0 auto;
+    padding: 24px 18px 80px;
+  }
+
+  /* HERO */
+  .public-hero {
+    text-align: center;
+    padding: 32px 16px 24px;
+    background: linear-gradient(135deg, var(--bg-card) 0%, #131313 100%);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    margin-bottom: 18px;
+    position: relative;
+    overflow: hidden;
+  }
+  .public-hero::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0; height: 1px;
+    background: linear-gradient(90deg, transparent, var(--gold), transparent);
+  }
+  .barber-avatar {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--gold), var(--gold-soft));
+    display: grid;
+    place-items: center;
+    margin: 0 auto 14px;
+    font-family: 'Playfair Display';
+    font-weight: 900;
+    font-size: 32px;
+    color: #0a0a0a;
+  }
+  .barber-name {
+    font-family: 'Playfair Display';
+    font-size: 26px;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+  .barbershop-name {
+    font-size: 13px;
+    color: var(--text-soft);
+    margin-bottom: 12px;
+  }
+  .barber-bio {
+    font-size: 13px;
+    color: var(--text-soft);
+    line-height: 1.5;
+    max-width: 400px;
+    margin: 12px auto 0;
+    font-style: italic;
+  }
+
+  /* STEPS */
+  .step-card {
+    background: var(--bg-card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 18px;
+    margin-bottom: 14px;
+  }
+  .step-h {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .step-num {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: var(--gold);
+    color: #0a0a0a;
+    display: grid;
+    place-items: center;
+    font-family: 'Playfair Display';
+    font-weight: 700;
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+  .step-title {
+    font-family: 'Playfair Display';
+    font-size: 17px;
+    font-weight: 600;
+  }
+
+  /* SERVIÇOS */
+  .servico-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    margin-bottom: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: var(--bg-card);
+  }
+  .servico-row:hover {
+    border-color: rgba(212,168,87,0.4);
+  }
+  .servico-row.selected {
+    border-color: var(--gold);
+    background: rgba(212,168,87,0.06);
+  }
+  .servico-radio {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    border: 2px solid var(--line);
+    flex-shrink: 0;
+    position: relative;
+  }
+  .servico-row.selected .servico-radio {
+    border-color: var(--gold);
+  }
+  .servico-row.selected .servico-radio::after {
+    content: '';
+    position: absolute;
+    inset: 3px;
+    border-radius: 50%;
+    background: var(--gold);
+  }
+  .servico-info {
+    flex: 1;
+  }
+  .servico-nome {
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .servico-meta {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+  .servico-preco {
+    font-family: 'Playfair Display';
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--gold);
+  }
+
+  /* DATAS */
+  .dates-scroll {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 4px 2px 12px;
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
+  }
+  .date-btn {
+    flex-shrink: 0;
+    min-width: 70px;
+    padding: 12px 10px;
+    background: var(--bg-card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    cursor: pointer;
+    text-align: center;
+    transition: all 0.2s;
+    font-family: inherit;
+    color: var(--text);
+  }
+  .date-btn:hover { border-color: rgba(212,168,87,0.4); }
+  .date-btn.selected {
+    border-color: var(--gold);
+    background: rgba(212,168,87,0.08);
+  }
+  .date-btn.disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
+  .date-day {
+    font-size: 10px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-weight: 600;
+  }
+  .date-num {
+    font-family: 'Playfair Display';
+    font-size: 22px;
+    font-weight: 700;
+    margin: 4px 0 2px;
+  }
+  .date-month {
+    font-size: 9px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+  }
+  .date-btn.selected .date-num { color: var(--gold); }
+
+  /* HORÁRIOS */
+  .horarios-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(75px, 1fr));
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .horario-btn {
+    padding: 10px;
+    background: var(--bg-card);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    cursor: pointer;
+    text-align: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+    transition: all 0.2s;
+  }
+  .horario-btn:hover { border-color: rgba(212,168,87,0.4); }
+  .horario-btn.selected {
+    border-color: var(--gold);
+    background: rgba(212,168,87,0.1);
+    color: var(--gold);
+  }
+  .horarios-empty {
+    text-align: center;
+    padding: 24px 12px;
+    color: var(--text-dim);
+    font-size: 13px;
+  }
+
+  /* SUMMARY */
+  .summary-card {
+    background: linear-gradient(135deg, rgba(212,168,87,0.08) 0%, rgba(212,168,87,0.02) 100%);
+    border: 1px solid rgba(212,168,87,0.3);
+    border-radius: 14px;
+    padding: 16px;
+    margin-bottom: 14px;
+  }
+  .summary-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    font-size: 13px;
+  }
+  .summary-row strong {
+    color: var(--gold);
+    font-family: 'Playfair Display';
+    font-weight: 700;
+  }
+
+  /* SUCCESS */
+  .success-screen {
+    text-align: center;
+    padding: 60px 20px;
+  }
+  .success-icon {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    background: rgba(111,207,151,0.15);
+    color: var(--green);
+    display: grid;
+    place-items: center;
+    margin: 0 auto 20px;
+  }
+  .success-icon svg { width: 36px; height: 36px; }
+
+  /* INACTIVE */
+  .inactive-screen {
+    text-align: center;
+    padding: 60px 20px;
+  }
+  .inactive-icon {
+    width: 64px; height: 64px;
+    border-radius: 50%;
+    background: rgba(224,116,116,0.1);
+    color: var(--red);
+    display: grid; place-items: center;
+    margin: 0 auto 16px;
+  }
+
+  .public-footer {
+    text-align: center;
+    padding: 20px;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+  .public-footer a {
+    color: var(--gold);
+    text-decoration: none;
+  }
+</style>
+</head>
+<body>
+
+<div class="public-container">
+  <div id="loadingScreen" style="text-align:center;padding:60px 20px;color:var(--text-soft)">
+    Carregando...
+  </div>
+
+  <div id="contentScreen" style="display:none">
+    <!-- HERO -->
+    <div class="public-hero">
+      <div class="barber-avatar" id="barberAvatar">B</div>
+      <div class="barbershop-name" id="barbershopName">Barbearia</div>
+      <h1 class="barber-name" id="barberName">Barbeiro</h1>
+      <p class="barber-bio" id="barberBio" style="display:none"></p>
+    </div>
+
+    <!-- STEP 1: Serviço -->
+    <div class="step-card">
+      <div class="step-h">
+        <div class="step-num">1</div>
+        <div class="step-title">Escolha o serviço</div>
+      </div>
+      <div id="servicosList"></div>
+    </div>
+
+    <!-- STEP 2: Data -->
+    <div class="step-card" id="step2" style="display:none">
+      <div class="step-h">
+        <div class="step-num">2</div>
+        <div class="step-title">Escolha o dia</div>
+      </div>
+      <div class="dates-scroll" id="datesList"></div>
+    </div>
+
+    <!-- STEP 3: Horário -->
+    <div class="step-card" id="step3" style="display:none">
+      <div class="step-h">
+        <div class="step-num">3</div>
+        <div class="step-title">Escolha o horário</div>
+      </div>
+      <div class="horarios-grid" id="horariosList"></div>
+    </div>
+
+    <!-- STEP 4: Dados do cliente -->
+    <div class="step-card" id="step4" style="display:none">
+      <div class="step-h">
+        <div class="step-num">4</div>
+        <div class="step-title">Seus dados</div>
+      </div>
+      <form id="bookForm" onsubmit="confirmarAgendamento(event)">
+        <div class="field" style="margin-top:0">
+          <label>Seu nome *</label>
+          <input class="input" type="text" name="nome" required placeholder="Como prefere ser chamado">
+        </div>
+        <div class="field">
+          <label>WhatsApp *</label>
+          <input class="input" type="tel" name="telefone" required placeholder="11987654321" inputmode="numeric">
+          <p class="field-hint">Só números, com DDD. Vamos confirmar pelo Whats.</p>
+        </div>
+
+        <!-- Resumo -->
+        <div class="summary-card" id="summaryCard">
+          <div class="summary-row">
+            <span style="color:var(--text-soft)">Serviço:</span>
+            <span id="sumServico">—</span>
+          </div>
+          <div class="summary-row">
+            <span style="color:var(--text-soft)">Data:</span>
+            <span id="sumData">—</span>
+          </div>
+          <div class="summary-row">
+            <span style="color:var(--text-soft)">Horário:</span>
+            <span id="sumHorario">—</span>
+          </div>
+          <div class="summary-row" style="margin-top:8px;padding-top:12px;border-top:1px solid var(--line)">
+            <span style="color:var(--text-soft)">Total:</span>
+            <strong id="sumPreco">—</strong>
+          </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-lg" style="width:100%" id="confirmBtn">
+          Confirmar agendamento
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- TELA DE SUCESSO -->
+  <div id="successScreen" style="display:none">
+    <div class="public-hero">
+      <div class="success-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <polyline points="20 6 9 17 4 12"/>
+        </svg>
+      </div>
+      <h1 class="barber-name">Agendado!</h1>
+      <p style="font-size:13px;color:var(--text-soft);margin-top:8px">Anota aí pra não esquecer:</p>
+
+      <div class="summary-card" style="margin:18px 0">
+        <div class="summary-row"><span style="color:var(--text-soft)">Cliente:</span> <span id="confirmCliente">—</span></div>
+        <div class="summary-row"><span style="color:var(--text-soft)">Serviço:</span> <span id="confirmServico">—</span></div>
+        <div class="summary-row"><span style="color:var(--text-soft)">Data:</span> <span id="confirmData">—</span></div>
+        <div class="summary-row"><span style="color:var(--text-soft)">Horário:</span> <strong id="confirmHorario">—</strong></div>
+      </div>
+
+      <a id="whatsAppConfirm" href="#" target="_blank" class="btn btn-primary btn-lg" style="width:100%;margin-bottom:8px">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+        Receber confirmação no Whats
+      </a>
+      <button onclick="window.location.reload()" class="btn btn-ghost" style="width:100%">
+        Marcar outro horário
+      </button>
+    </div>
+  </div>
+
+  <!-- PÁGINA INATIVA -->
+  <div id="inactiveScreen" style="display:none">
+    <div class="public-hero">
+      <div class="inactive-icon">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      </div>
+      <h1 class="barber-name">Página não encontrada</h1>
+      <p style="color:var(--text-soft);font-size:13px;margin-top:8px;line-height:1.6">
+        Esse link não está disponível, ou o profissional desativou os agendamentos online.<br><br>
+        Se você foi indicado por alguém, peça o link correto.
+      </p>
+    </div>
+  </div>
+
+  <div class="public-footer">
+    Sistema de agendamento por <a href="/" target="_blank">Cortify</a> · Para barbeiros autônomos
+  </div>
+</div>
+
+<!-- Toast container -->
+<div class="toast-container" id="toastContainer"></div>
+
+<!-- Scripts -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/config.js"></script>
+<script src="js/supabase-client.js"></script>
+<script src="js/book.js"></script>
+</body>
+</html>
