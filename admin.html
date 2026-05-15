@@ -123,50 +123,326 @@
         </div>
       </div>
 
-      <!-- Stats -->
-      <div class="stats-grid">
-        <div class="stat-card">
-          <div class="stat-label">Total de barbeiros</div>
-          <div class="stat-num" id="statTotal">0</div>
+      <!-- Tabs principais do admin -->
+      <div class="tabs" style="margin-bottom: 24px">
+        <button class="tab-btn active" id="adminTabUsers" onclick="setAdminTab('users')">Usuários</button>
+        <button class="tab-btn" id="adminTabPlans" onclick="setAdminTab('plans')">Planos</button>
+        <button class="tab-btn" id="adminTabCoupons" onclick="setAdminTab('coupons')">Cupons</button>
+      </div>
+
+      <!-- ===== ABA: USUÁRIOS ===== -->
+      <div id="adminViewUsers">
+        <!-- Stats -->
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-label">Total de barbeiros</div>
+            <div class="stat-num" id="statTotal">0</div>
+          </div>
+          <div class="stat-card gold">
+            <div class="stat-label">Pagantes ativos</div>
+            <div class="stat-num" id="statActive">0</div>
+            <div class="stat-foot" id="statMrr"></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Em trial</div>
+            <div class="stat-num" id="statTrial">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Expirados / bloqueados</div>
+            <div class="stat-num" id="statExpired">0</div>
+          </div>
         </div>
-        <div class="stat-card gold">
-          <div class="stat-label">Pagantes ativos</div>
-          <div class="stat-num" id="statActive">0</div>
-          <div class="stat-foot" id="statMrr"></div>
+
+        <!-- Filtros -->
+        <div class="filter-bar">
+          <button class="tab-btn active" data-filter="all" onclick="filterUsers('all', event)">Todos</button>
+          <button class="tab-btn" data-filter="ACTIVE" onclick="filterUsers('ACTIVE', event)">Pagantes</button>
+          <button class="tab-btn" data-filter="TRIAL" onclick="filterUsers('TRIAL', event)">Em trial</button>
+          <button class="tab-btn" data-filter="EXPIRED" onclick="filterUsers('EXPIRED', event)">Expirados</button>
+          <button class="tab-btn" data-filter="BLOCKED" onclick="filterUsers('BLOCKED', event)">Bloqueados</button>
         </div>
-        <div class="stat-card">
-          <div class="stat-label">Em trial</div>
-          <div class="stat-num" id="statTrial">0</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">Expirados / bloqueados</div>
-          <div class="stat-num" id="statExpired">0</div>
+
+        <!-- Tabela -->
+        <div class="users-table">
+          <div class="users-row head">
+            <div></div>
+            <div>Barbeiro</div>
+            <div>Status</div>
+            <div>Cadastro</div>
+            <div>Próx. vencimento</div>
+            <div>Ações</div>
+          </div>
+          <div id="usersList"></div>
         </div>
       </div>
 
-      <!-- Filtros -->
-      <div class="filter-bar">
-        <button class="tab-btn active" data-filter="all" onclick="filterUsers('all', event)">Todos</button>
-        <button class="tab-btn" data-filter="ACTIVE" onclick="filterUsers('ACTIVE', event)">Pagantes</button>
-        <button class="tab-btn" data-filter="TRIAL" onclick="filterUsers('TRIAL', event)">Em trial</button>
-        <button class="tab-btn" data-filter="EXPIRED" onclick="filterUsers('EXPIRED', event)">Expirados</button>
-        <button class="tab-btn" data-filter="BLOCKED" onclick="filterUsers('BLOCKED', event)">Bloqueados</button>
+      <!-- ===== ABA: PLANOS ===== -->
+      <div id="adminViewPlans" style="display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
+          <div>
+            <h2 style="font-family:'Playfair Display';font-size:22px;margin-bottom:4px">Planos disponíveis</h2>
+            <p style="color:var(--text-soft);font-size:13px">Clique em editar pra mudar preço ou features. Mudanças criam nova versão e não afetam clientes atuais.</p>
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="openPlanModal()">+ Novo plano</button>
+        </div>
+
+        <div id="plansList"></div>
       </div>
 
-      <!-- Tabela -->
-      <div class="users-table">
-        <div class="users-row head">
-          <div></div>
-          <div>Barbeiro</div>
-          <div>Status</div>
-          <div>Cadastro</div>
-          <div>Próx. vencimento</div>
-          <div>Ações</div>
+      <!-- ===== ABA: CUPONS ===== -->
+      <div id="adminViewCoupons" style="display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
+          <div>
+            <h2 style="font-family:'Playfair Display';font-size:22px;margin-bottom:4px">Cupons de desconto</h2>
+            <p style="color:var(--text-soft);font-size:13px">Crie cupons pra aplicar desconto em planos. Pode ser % ou valor fixo.</p>
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="openCouponModal()">+ Novo cupom</button>
         </div>
-        <div id="usersList"></div>
+
+        <div id="couponsList"></div>
       </div>
     </div>
   </main>
+</div>
+
+<!-- ===== MODAL: EDITAR/CRIAR PLANO ===== -->
+<div class="modal-overlay" id="planModal">
+  <div class="modal" style="max-width:600px">
+    <div class="modal-header">
+      <div>
+        <h2 id="planModalTitle">Novo plano</h2>
+        <div class="modal-header-sub">Mudanças criam nova versão automaticamente</div>
+      </div>
+      <button class="modal-close" onclick="closeModalAdmin('planModal')">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <form id="planForm" onsubmit="savePlan(event)">
+        <input type="hidden" name="plan_id">
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="field">
+            <label>Nome *</label>
+            <input class="input" type="text" name="name" required placeholder="Autônomo Mensal">
+          </div>
+          <div class="field">
+            <label>Slug (URL) *</label>
+            <input class="input" type="text" name="slug" required pattern="[a-z0-9-]+" placeholder="autonomo-mensal">
+            <p class="field-hint">Só letras minúsculas, números e hífens</p>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Descrição</label>
+          <textarea class="textarea" name="description" rows="2" placeholder="Pra barbeiros autônomos"></textarea>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+          <div class="field">
+            <label>Tipo *</label>
+            <select class="input" name="plan_kind" required>
+              <option value="AUTONOMO">Autônomo</option>
+              <option value="BARBEARIA">Barbearia</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Preço (R$) *</label>
+            <input class="input" type="number" step="0.01" min="0" name="price" required placeholder="79.00">
+          </div>
+          <div class="field">
+            <label>Ciclo *</label>
+            <select class="input" name="billing_cycle" required>
+              <option value="MONTHLY">Mensal</option>
+              <option value="YEARLY">Anual</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+          <div class="field">
+            <label>Trial (dias)</label>
+            <input class="input" type="number" min="0" max="90" name="trial_days" value="7">
+          </div>
+          <div class="field" id="perSeatField" style="display:none">
+            <label>Mín. barbeiros</label>
+            <input class="input" type="number" min="1" name="min_seats" value="2">
+          </div>
+          <div class="field" id="maxSeatsField" style="display:none">
+            <label>Máx. barbeiros</label>
+            <input class="input" type="number" min="1" name="max_seats" placeholder="ilimitado">
+          </div>
+        </div>
+
+        <div class="field" id="perSeatToggleField" style="display:none">
+          <label style="display:flex;align-items:center;gap:10px;cursor:pointer">
+            <input type="checkbox" name="per_seat_pricing">
+            <span style="font-size:13px">Cobrar por barbeiro (preço × número)</span>
+          </label>
+        </div>
+
+        <div class="field">
+          <label>Visibilidade</label>
+          <div style="display:flex;gap:14px;font-size:13px">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+              <input type="checkbox" name="active" checked>
+              <span>Ativo</span>
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+              <input type="checkbox" name="visible" checked>
+              <span>Aparece no checkout</span>
+            </label>
+          </div>
+          <p class="field-hint">Inativo = não pode ser usado. Não visível = só admin pode atribuir.</p>
+        </div>
+
+        <!-- FEATURES -->
+        <div class="field">
+          <label style="margin-bottom:10px;display:block">Features do plano</label>
+          <div style="background:var(--bg-soft);border:1px solid var(--line);border-radius:10px;padding:14px">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:13px">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                <input type="checkbox" name="feat_can_use_public_page" checked>
+                <span>Página pública</span>
+              </label>
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                <input type="checkbox" name="feat_can_use_packages" checked>
+                <span>Sistema de pacotes</span>
+              </label>
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                <input type="checkbox" name="feat_can_export_pdf">
+                <span>Exportar PDF</span>
+              </label>
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                <input type="checkbox" name="feat_can_send_email_marketing">
+                <span>Email marketing</span>
+              </label>
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                <input type="checkbox" name="feat_can_use_loyalty_system">
+                <span>Sistema de fidelidade</span>
+              </label>
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                <input type="checkbox" name="feat_can_use_whatsapp_api">
+                <span>WhatsApp API</span>
+              </label>
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                <input type="checkbox" name="feat_can_have_logo" checked>
+                <span>Logo personalizado</span>
+              </label>
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                <input type="checkbox" name="feat_can_manage_team">
+                <span>Gerenciar equipe</span>
+              </label>
+            </div>
+
+            <div style="margin-top:14px;display:grid;grid-template-columns:1fr 1fr;gap:10px">
+              <div class="field" style="margin-top:0">
+                <label style="font-size:11px">Máx. clientes</label>
+                <input class="input" type="number" min="0" name="feat_max_clientes" value="999999" style="padding:8px;font-size:12px">
+              </div>
+              <div class="field" style="margin-top:0">
+                <label style="font-size:11px">Máx. serviços</label>
+                <input class="input" type="number" min="0" name="feat_max_servicos" value="999" style="padding:8px;font-size:12px">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Notas internas (opcional)</label>
+          <textarea class="textarea" name="notes" rows="2" placeholder="Anotações pra você (cliente não vê)"></textarea>
+        </div>
+
+        <div style="display:flex;gap:8px;margin-top:18px">
+          <button type="submit" class="btn btn-primary" style="flex:1">Salvar plano</button>
+          <button type="button" class="btn btn-ghost" onclick="closeModalAdmin('planModal')">Cancelar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MODAL: CRIAR/EDITAR CUPOM ===== -->
+<div class="modal-overlay" id="couponModal">
+  <div class="modal" style="max-width:500px">
+    <div class="modal-header">
+      <div>
+        <h2 id="couponModalTitle">Novo cupom</h2>
+        <div class="modal-header-sub">Cupons aplicam desconto no checkout</div>
+      </div>
+      <button class="modal-close" onclick="closeModalAdmin('couponModal')">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <form id="couponForm" onsubmit="saveCoupon(event)">
+        <input type="hidden" name="coupon_id">
+
+        <div class="field" style="margin-top:0">
+          <label>Código *</label>
+          <input class="input" type="text" name="code" required placeholder="PROMO50" style="text-transform:uppercase">
+          <p class="field-hint">O cliente digita esse código no checkout</p>
+        </div>
+
+        <div class="field">
+          <label>Descrição</label>
+          <input class="input" type="text" name="description" placeholder="50% off primeiro mês">
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="field">
+            <label>Tipo *</label>
+            <select class="input" name="discount_type" required>
+              <option value="PERCENT">% desconto</option>
+              <option value="FIXED">R$ fixo</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Valor *</label>
+            <input class="input" type="number" step="0.01" min="0" name="discount_value" required placeholder="50">
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Duração *</label>
+          <select class="input" name="duration" required>
+            <option value="ONCE">1 vez (primeiro pagamento)</option>
+            <option value="REPEATING">Por X meses</option>
+            <option value="FOREVER">Vitalício</option>
+          </select>
+        </div>
+
+        <div class="field" id="durationMonthsField" style="display:none">
+          <label>Quantos meses</label>
+          <input class="input" type="number" min="1" name="duration_in_months" placeholder="3">
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="field">
+            <label>Limite de uso (opcional)</label>
+            <input class="input" type="number" min="0" name="max_redemptions" placeholder="100">
+            <p class="field-hint">Deixe vazio = ilimitado</p>
+          </div>
+          <div class="field">
+            <label>Validade (opcional)</label>
+            <input class="input" type="datetime-local" name="valid_until">
+          </div>
+        </div>
+
+        <div class="field">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" name="active" checked>
+            <span>Cupom ativo</span>
+          </label>
+        </div>
+
+        <div style="display:flex;gap:8px;margin-top:18px">
+          <button type="submit" class="btn btn-primary" style="flex:1">Salvar cupom</button>
+          <button type="button" class="btn btn-ghost" onclick="closeModalAdmin('couponModal')">Cancelar</button>
+        </div>
+      </form>
+    </div>
+  </div>
 </div>
 
 <!-- Modal: Ações sobre usuário -->
@@ -188,6 +464,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="js/config.js"></script>
 <script src="js/supabase-client.js"></script>
+<script src="js/admin-plans.js"></script>
 <script>
   let allUsers = [];
   let currentFilter = "all";
