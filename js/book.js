@@ -1,5 +1,6 @@
 // ============================================
 // CORTIFY - Página Pública de Agendamento
+// Adaptado pro book.html que está no Vercel
 // ============================================
 
 const state = {
@@ -31,25 +32,27 @@ function pad(n) { return String(n).padStart(2, '0'); }
 
 function toast(msg, type = 'info') {
   const el = document.createElement('div');
-  el.style.cssText = `background:${type === 'error' ? '#3a1a1a' : type === 'success' ? '#1a3a25' : '#1a1a1a'};color:#fff;padding:12px 18px;border-radius:10px;margin-top:8px;border:1px solid ${type === 'error' ? '#e07474' : type === 'success' ? '#6fcf97' : '#333'};font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,0.3)`;
+  el.style.cssText = `background:${type === 'error' ? '#3a1a1a' : type === 'success' ? '#1a3a25' : '#1a1a1a'};color:#fff;padding:12px 18px;border-radius:10px;margin-top:8px;border:1px solid ${type === 'error' ? '#e07474' : type === 'success' ? '#6fcf97' : '#333'};font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,0.3);position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:9999`;
   el.textContent = msg;
-  document.getElementById('toastContainer').appendChild(el);
+  document.body.appendChild(el);
   setTimeout(() => el.remove(), 4000);
+}
+
+function setSafe(id, value, prop = 'textContent') {
+  const el = document.getElementById(id);
+  if (el) el[prop] = value;
 }
 
 // ========== INICIALIZAÇÃO ==========
 (async function init() {
-  // Pega slug da URL: ?b=marcos
   const params = new URLSearchParams(window.location.search);
   state.slug = params.get('b');
 
   if (!state.slug) {
-    document.getElementById('loadingState').style.display = 'none';
-    document.getElementById('errorState').style.display = 'block';
+    showInactive();
     return;
   }
 
-  // Inicializa Supabase
   const sb = window.supabase.createClient(
     window.SUPABASE_CONFIG.url,
     window.SUPABASE_CONFIG.anonKey
@@ -60,13 +63,58 @@ function toast(msg, type = 'info') {
     await loadBarber();
     await loadServicos();
     await loadAgendamentos();
-    showBookingFlow();
+    showContent();
   } catch (err) {
     console.error(err);
-    document.getElementById('loadingState').style.display = 'none';
-    document.getElementById('errorState').style.display = 'block';
+    showInactive();
   }
 })();
+
+function showContent() {
+  const loading = document.getElementById('loadingScreen');
+  const content = document.getElementById('contentScreen');
+  if (loading) loading.style.display = 'none';
+  if (content) content.style.display = 'block';
+}
+
+function showInactive() {
+  const loading = document.getElementById('loadingScreen');
+  const content = document.getElementById('contentScreen');
+  const success = document.getElementById('successScreen');
+  const inactive = document.getElementById('inactiveScreen');
+  if (loading) loading.style.display = 'none';
+  if (content) content.style.display = 'none';
+  if (success) success.style.display = 'none';
+  if (inactive) inactive.style.display = 'block';
+}
+
+function showSuccess() {
+  const content = document.getElementById('contentScreen');
+  const success = document.getElementById('successScreen');
+  if (content) content.style.display = 'none';
+  if (success) success.style.display = 'block';
+
+  const ag = state.agendamentoConfirmado;
+  const dataStr = ag.inicio.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' });
+  const horaStr = ag.inicio.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+
+  setSafe('confirmCliente', ag.cliente_nome);
+  setSafe('confirmServico', ag.servico.nome);
+  setSafe('confirmData', dataStr);
+  setSafe('confirmHorario', horaStr);
+
+  // Link WhatsApp pro barbeiro
+  const phone = (state.barber.phone || '').replace(/\D/g, '');
+  const link = document.getElementById('whatsAppConfirm');
+  if (phone && link) {
+    const msg = `Olá ${state.barber.name.split(' ')[0]}! Acabei de agendar pelo seu link:\n\n📅 ${dataStr} às ${horaStr}\n✂️ ${ag.servico.nome}\n\nMeu nome: ${ag.cliente_nome}`;
+    link.href = `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
+  } else if (link) {
+    link.style.display = 'none';
+  }
+
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
 
 // ========== CARREGA DADOS DO BARBEIRO ==========
 async function loadBarber() {
@@ -83,12 +131,20 @@ async function loadBarber() {
 
   state.barber = data;
 
-  // Renderiza header
   const initials = (data.name || '?').split(' ').map(p => p[0]).slice(0, 2).join('').toUpperCase();
-  document.getElementById('barberAvatar').textContent = initials;
-  document.getElementById('barberName').textContent = data.name || '';
-  document.getElementById('barberShop').textContent = data.barbershop_name || '';
-  document.getElementById('barberBio').textContent = data.public_bio || '';
+  setSafe('barberAvatar', initials);
+  setSafe('barberName', data.name || '');
+  setSafe('barbershopName', data.barbershop_name || '');
+
+  const bio = document.getElementById('barberBio');
+  if (bio) {
+    if (data.public_bio) {
+      bio.textContent = data.public_bio;
+      bio.style.display = 'block';
+    } else {
+      bio.style.display = 'none';
+    }
+  }
 
   document.title = `Agendar com ${data.name} · Cortify`;
 }
@@ -110,19 +166,21 @@ async function loadServicos() {
 
 function renderServicos() {
   const container = document.getElementById('servicosList');
+  if (!container) return;
 
   if (state.servicos.length === 0) {
-    container.innerHTML = `<div class="empty-msg">Esse barbeiro ainda não cadastrou serviços.</div>`;
+    container.innerHTML = `<div class="horarios-empty">Esse barbeiro ainda não cadastrou serviços.</div>`;
     return;
   }
 
   container.innerHTML = state.servicos.map(s => `
-    <div class="servico-item" data-id="${s.id}" onclick="selecionarServico('${s.id}')">
-      <div class="servico-item-info">
-        <div class="servico-item-name">${escapeHtml(s.nome)}</div>
-        <div class="servico-item-meta">${s.duracao_min} min</div>
+    <div class="servico-row" data-id="${s.id}" onclick="selecionarServico('${s.id}')">
+      <div class="servico-radio"></div>
+      <div class="servico-info">
+        <div class="servico-nome">${escapeHtml(s.nome)}</div>
+        <div class="servico-meta">${s.duracao_min} min</div>
       </div>
-      <div class="servico-item-price">${formatBRL(s.preco)}</div>
+      <div class="servico-preco">${formatBRL(s.preco)}</div>
     </div>
   `).join('');
 }
@@ -132,16 +190,18 @@ function selecionarServico(id) {
   state.dataSelecionada = null;
   state.horarioSelecionado = null;
 
-  document.querySelectorAll('.servico-item').forEach(el => {
+  document.querySelectorAll('.servico-row').forEach(el => {
     el.classList.toggle('selected', el.dataset.id === id);
   });
 
-  document.getElementById('stepDateTime').style.display = 'block';
-  document.getElementById('stepDados').style.display = 'none';
-  renderDateScroll();
+  document.getElementById('step2').style.display = 'block';
+  document.getElementById('step3').style.display = 'none';
+  document.getElementById('step4').style.display = 'none';
+
+  renderDates();
 
   setTimeout(() => {
-    document.getElementById('stepDateTime').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    document.getElementById('step2').scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, 100);
 }
 
@@ -170,9 +230,11 @@ async function loadAgendamentos() {
   state.blocks = blockRes.data || [];
 }
 
-// ========== DATE SCROLL ==========
-function renderDateScroll() {
-  const container = document.getElementById('dateScroll');
+// ========== DATAS ==========
+function renderDates() {
+  const container = document.getElementById('datesList');
+  if (!container) return;
+
   const dias = [];
   const hoje = new Date();
   hoje.setHours(0, 0, 0, 0);
@@ -193,13 +255,13 @@ function renderDateScroll() {
     const isoDate = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
     return `
-      <div class="date-pill ${!ativo ? 'disabled' : ''}" 
-           data-date="${isoDate}" 
-           ${ativo ? `onclick="selecionarData('${isoDate}')"` : ''}>
-        <div class="date-pill-day">${diasSemana[diaSem]}</div>
-        <div class="date-pill-num">${d.getDate()}</div>
-        <div class="date-pill-month">${meses[d.getMonth()]}</div>
-      </div>
+      <button class="date-btn ${!ativo ? 'disabled' : ''}" 
+              data-date="${isoDate}" 
+              ${ativo ? `onclick="selecionarData('${isoDate}')"` : 'disabled'}>
+        <div class="date-day">${diasSemana[diaSem]}</div>
+        <div class="date-num">${d.getDate()}</div>
+        <div class="date-month">${meses[d.getMonth()]}</div>
+      </button>
     `;
   }).join('');
 
@@ -215,23 +277,32 @@ function selecionarData(isoDate) {
   state.dataSelecionada = isoDate;
   state.horarioSelecionado = null;
 
-  document.querySelectorAll('.date-pill').forEach(el => {
+  document.querySelectorAll('.date-btn').forEach(el => {
     el.classList.toggle('selected', el.dataset.date === isoDate);
   });
 
-  renderTimeSlots();
+  document.getElementById('step3').style.display = 'block';
+  document.getElementById('step4').style.display = 'none';
+
+  renderHorarios();
+
+  setTimeout(() => {
+    document.getElementById('step3').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, 100);
 }
 
-// ========== TIME SLOTS ==========
-function renderTimeSlots() {
-  const container = document.getElementById('timeSlots');
+// ========== HORÁRIOS ==========
+function renderHorarios() {
+  const container = document.getElementById('horariosList');
+  if (!container) return;
+
   const [y, m, d] = state.dataSelecionada.split('-').map(Number);
   const data = new Date(y, m - 1, d);
   const diaSem = data.getDay();
   const work = state.barber.work_schedule?.[String(diaSem)];
 
   if (!work || !work.active) {
-    container.innerHTML = `<div class="empty-msg">Barbeiro não atende neste dia.</div>`;
+    container.innerHTML = `<div class="horarios-empty">Barbeiro não atende neste dia.</div>`;
     return;
   }
 
@@ -239,7 +310,6 @@ function renderTimeSlots() {
   const [hFim, mFim] = work.end.split(':').map(Number);
   const duracao = state.servicoSelecionado.duracao_min || 30;
 
-  // Gera todos os slots
   const slots = [];
   let h = hIni, min = mIni;
   while (h < hFim || (h === hFim && min < mFim)) {
@@ -249,7 +319,7 @@ function renderTimeSlots() {
   }
 
   if (slots.length === 0) {
-    container.innerHTML = `<div class="empty-msg">Sem horários disponíveis neste dia.</div>`;
+    container.innerHTML = `<div class="horarios-empty">Sem horários disponíveis neste dia.</div>`;
     return;
   }
 
@@ -259,72 +329,70 @@ function renderTimeSlots() {
     const inicioSlot = new Date(y, m - 1, d, slot.h, slot.min, 0);
     const fimSlot = new Date(inicioSlot.getTime() + duracao * 60000);
 
-    // Passado
     if (inicioSlot <= agora) {
-      return { ...slot, disponivel: false, motivo: 'passado' };
+      return { ...slot, disponivel: false };
     }
 
-    // Passa do horário fim
     const fimMinutosDia = hFim * 60 + mFim;
     const fimSlotMinutosDia = fimSlot.getHours() * 60 + fimSlot.getMinutes();
     if (fimSlotMinutosDia > fimMinutosDia && fimSlot.getDate() === inicioSlot.getDate()) {
-      return { ...slot, disponivel: false, motivo: 'fim_dia' };
+      return { ...slot, disponivel: false };
     }
 
-    // Conflito com agendamento
     const conflito = state.agendamentos.some(ag => {
       const agIni = new Date(ag.inicio);
       const agFim = new Date(ag.fim);
       return agIni < fimSlot && agFim > inicioSlot;
     });
-    if (conflito) {
-      return { ...slot, disponivel: false, motivo: 'ocupado' };
-    }
+    if (conflito) return { ...slot, disponivel: false };
 
-    // Bloqueio
     const bloqueado = state.blocks.some(b => {
       const bIni = new Date(b.inicio);
       const bFim = new Date(b.fim);
       return bIni < fimSlot && bFim > inicioSlot;
     });
-    if (bloqueado) {
-      return { ...slot, disponivel: false, motivo: 'bloqueado' };
-    }
+    if (bloqueado) return { ...slot, disponivel: false };
 
     return { ...slot, disponivel: true };
   });
 
-  const algumLivre = slotsLivres.some(s => s.disponivel);
+  const livres = slotsLivres.filter(s => s.disponivel);
 
-  if (!algumLivre) {
-    container.innerHTML = `<div class="empty-msg">Sem horários livres neste dia.<br>Tente outro dia.</div>`;
+  if (livres.length === 0) {
+    container.innerHTML = `<div class="horarios-empty">Sem horários livres neste dia.<br>Tente outro dia.</div>`;
     return;
   }
 
-  container.innerHTML = `
-    <div class="time-grid">
-      ${slotsLivres.map(s => `
-        <div class="time-slot ${s.disponivel ? '' : 'disabled'}" 
-             ${s.disponivel ? `onclick="selecionarHorario(${s.h}, ${s.min})"` : ''}
-             data-time="${pad(s.h)}:${pad(s.min)}">
-          ${pad(s.h)}:${pad(s.min)}
-        </div>
-      `).join('')}
-    </div>
-  `;
+  container.innerHTML = livres.map(s => `
+    <button class="horario-btn" 
+            data-time="${pad(s.h)}:${pad(s.min)}"
+            onclick="selecionarHorario(${s.h}, ${s.min})">
+      ${pad(s.h)}:${pad(s.min)}
+    </button>
+  `).join('');
 }
 
 function selecionarHorario(h, min) {
   state.horarioSelecionado = { h, min };
 
-  document.querySelectorAll('.time-slot').forEach(el => {
+  document.querySelectorAll('.horario-btn').forEach(el => {
     el.classList.toggle('selected', el.dataset.time === `${pad(h)}:${pad(min)}`);
   });
 
-  document.getElementById('stepDados').style.display = 'block';
+  // Atualiza summary
+  const dataObj = new Date(state.dataSelecionada + 'T00:00:00');
+  const dataStr = dataObj.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' });
+  setSafe('sumServico', state.servicoSelecionado.nome);
+  setSafe('sumData', dataStr);
+  setSafe('sumHorario', `${pad(h)}:${pad(min)}`);
+  setSafe('sumPreco', formatBRL(state.servicoSelecionado.preco));
+
+  document.getElementById('step4').style.display = 'block';
+
   setTimeout(() => {
-    document.getElementById('stepDados').scrollIntoView({ behavior: 'smooth', block: 'start' });
-    document.querySelector('input[name="nome"]').focus();
+    document.getElementById('step4').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const nameInput = document.querySelector('input[name="nome"]');
+    if (nameInput) nameInput.focus();
   }, 100);
 }
 
@@ -336,21 +404,21 @@ async function confirmarAgendamento(e) {
   const fd = new FormData(form);
   const nome = String(fd.get('nome') || '').trim();
   let telefone = String(fd.get('telefone') || '').replace(/\D/g, '');
-  const observacao = String(fd.get('observacao') || '').trim();
 
   if (!nome || telefone.length < 10) {
     toast('Preencha nome e telefone corretamente', 'error');
     return;
   }
 
-  // Normaliza telefone (adiciona 55 se não tiver)
   if (!telefone.startsWith('55') && (telefone.length === 10 || telefone.length === 11)) {
     telefone = '55' + telefone;
   }
 
   const btn = document.getElementById('confirmBtn');
-  btn.disabled = true;
-  btn.innerHTML = 'Confirmando...';
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Confirmando...';
+  }
 
   const [y, m, d] = state.dataSelecionada.split('-').map(Number);
   const inicio = new Date(y, m - 1, d, state.horarioSelecionado.h, state.horarioSelecionado.min);
@@ -364,7 +432,7 @@ async function confirmarAgendamento(e) {
       cliente_nome: nome,
       data_inicio: inicio.toISOString(),
       data_fim: fim.toISOString(),
-      observacao: observacao || null
+      observacao: null
     });
 
     if (error) throw error;
@@ -390,67 +458,15 @@ async function confirmarAgendamento(e) {
       msg = err.message;
     }
     toast(msg, 'error');
-    btn.disabled = false;
-    btn.innerHTML = 'Confirmar agendamento';
+
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'Confirmar agendamento';
+    }
 
     await loadAgendamentos();
-    renderTimeSlots();
+    renderHorarios();
   }
-}
-
-// ========== TELA DE SUCESSO ==========
-function showSuccess() {
-  document.getElementById('stepServico').style.display = 'none';
-  document.getElementById('stepDateTime').style.display = 'none';
-  document.getElementById('stepDados').style.display = 'none';
-
-  const screen = document.getElementById('successScreen');
-  screen.style.display = 'block';
-
-  const ag = state.agendamentoConfirmado;
-  const dataStr = ag.inicio.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' });
-  const horaStr = ag.inicio.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-  const horaFimStr = ag.fim.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-
-  document.getElementById('bookingSummary').innerHTML = `
-    <div class="booking-summary-row">
-      <span class="booking-summary-label">Serviço</span>
-      <span class="booking-summary-value">${escapeHtml(ag.servico.nome)}</span>
-    </div>
-    <div class="booking-summary-row">
-      <span class="booking-summary-label">Data</span>
-      <span class="booking-summary-value">${dataStr}</span>
-    </div>
-    <div class="booking-summary-row">
-      <span class="booking-summary-label">Horário</span>
-      <span class="booking-summary-value">${horaStr} — ${horaFimStr}</span>
-    </div>
-    <div class="booking-summary-row">
-      <span class="booking-summary-label">Valor</span>
-      <span class="booking-summary-value" style="color:var(--gold)">${formatBRL(ag.servico.preco)}</span>
-    </div>
-    <div class="booking-summary-row">
-      <span class="booking-summary-label">Barbeiro</span>
-      <span class="booking-summary-value">${escapeHtml(state.barber.name)}</span>
-    </div>
-  `;
-
-  // Link WhatsApp pro cliente confirmar com o barbeiro
-  const phone = (state.barber.phone || '').replace(/\D/g, '');
-  if (phone) {
-    const msg = `Olá ${state.barber.name.split(' ')[0]}! Acabei de agendar pelo seu link:\n\n📅 ${dataStr} às ${horaStr}\n✂️ ${ag.servico.nome}\n\nMeu nome: ${ag.cliente_nome}`;
-    const url = `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
-    document.getElementById('whatsappConfirmLink').href = url;
-  } else {
-    document.getElementById('whatsappConfirmLink').style.display = 'none';
-  }
-
-  screen.scrollIntoView({ behavior: 'smooth' });
-}
-
-function showBookingFlow() {
-  document.getElementById('loadingState').style.display = 'none';
-  document.getElementById('bookingFlow').style.display = 'block';
 }
 
 // Globals
