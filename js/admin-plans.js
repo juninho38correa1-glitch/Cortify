@@ -24,27 +24,34 @@ async function loadPlans() {
   const container = document.getElementById('plansList');
   container.innerHTML = `<div style="text-align:center;padding:30px;color:var(--text-soft)">Carregando...</div>`;
 
-  // Busca planos + versão atual + contagem de subscriptions
-  const { data: plans, error } = await sb
-    .from('plans')
-    .select(`
-      *,
-      current_version:plan_versions!plans_current_version_id_fkey(*)
-    `)
-    .order('display_order');
+  // Busca planos e versões em queries separadas (mais robusto que join)
+  const [plansRes, versionsRes, subsRes] = await Promise.all([
+    sb.from('plans').select('*').order('display_order'),
+    sb.from('plan_versions').select('*'),
+    sb.from('subscriptions').select('plan_id, status')
+  ]);
 
-  if (error) {
-    container.innerHTML = `<div style="text-align:center;padding:30px;color:var(--red)">Erro: ${error.message}</div>`;
+  if (plansRes.error) {
+    container.innerHTML = `<div style="text-align:center;padding:30px;color:var(--red)">Erro ao carregar planos: ${plansRes.error.message}</div>`;
     return;
   }
 
-  // Conta subscriptions ativas por plano
-  const { data: subCounts } = await sb
-    .from('subscriptions')
-    .select('plan_id, status');
+  const plans = plansRes.data || [];
+  const versions = versionsRes.data || [];
+  const subs = subsRes.data || [];
 
+  // Mapeia versão atual de cada plano
+  const versionById = {};
+  versions.forEach(v => { versionById[v.id] = v; });
+
+  // Anexa current_version manualmente
+  plans.forEach(p => {
+    p.current_version = p.current_version_id ? versionById[p.current_version_id] : null;
+  });
+
+  // Conta subscriptions
   const countsByPlan = {};
-  (subCounts || []).forEach(s => {
+  subs.forEach(s => {
     if (!countsByPlan[s.plan_id]) countsByPlan[s.plan_id] = { active: 0, total: 0 };
     countsByPlan[s.plan_id].total++;
     if (s.status === 'ACTIVE' || s.status === 'TRIAL') countsByPlan[s.plan_id].active++;
@@ -52,7 +59,7 @@ async function loadPlans() {
 
   allPlans = plans;
 
-  if (!plans || plans.length === 0) {
+  if (plans.length === 0) {
     container.innerHTML = `<div style="text-align:center;padding:40px;color:var(--text-soft)">Nenhum plano cadastrado ainda. Crie o primeiro.</div>`;
     return;
   }
