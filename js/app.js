@@ -22,6 +22,9 @@ const state = {
     return;
   }
 
+  // Carrega subscription atual do usuário (com plano + versão)
+  await loadUserSubscription();
+
   // Verifica acesso
   if (!bf.hasAccess(state.profile)) {
     showAccessDenied();
@@ -43,6 +46,63 @@ const state = {
   handleNavigate();
 })();
 
+// ========== CARREGAR SUBSCRIPTION + PLANO ATUAL ==========
+async function loadUserSubscription() {
+  // Tenta usar a view (com plano)
+  const { data: sub } = await sb
+    .from('subscriptions')
+    .select('id, plan_id, plan_version_id, status, amount, billing_cycle, current_period_end, trial_ends_at')
+    .eq('user_id', state.user.id)
+    .maybeSingle();
+
+  state.subscription = sub;
+
+  // Busca plano atual visível pra mostrar o preço pra novos clientes
+  // Pega o autonomo-mensal como default (pra trial banner mostrar valor atual)
+  if (sub && sub.plan_version_id) {
+    // Cliente já tem subscription — pega a versão dele (preço congelado)
+    const { data: planVersion } = await sb
+      .from('plan_versions')
+      .select('price, billing_cycle, trial_days')
+      .eq('id', sub.plan_version_id)
+      .maybeSingle();
+    if (planVersion) {
+      state.currentPlanPrice = Number(planVersion.price);
+      state.currentPlanCycle = planVersion.billing_cycle;
+    }
+  } else {
+    // Sem subscription — busca preço VIGENTE do plano mensal autônomo (pra trial banner)
+    const { data: defaultPlan } = await sb
+      .from('plans')
+      .select('current_version_id')
+      .eq('slug', 'autonomo-mensal')
+      .maybeSingle();
+
+    if (defaultPlan?.current_version_id) {
+      const { data: planVersion } = await sb
+        .from('plan_versions')
+        .select('price, billing_cycle, trial_days')
+        .eq('id', defaultPlan.current_version_id)
+        .maybeSingle();
+      if (planVersion) {
+        state.currentPlanPrice = Number(planVersion.price);
+        state.currentPlanCycle = planVersion.billing_cycle;
+      }
+    }
+  }
+
+  // Fallback se nada carregou
+  if (!state.currentPlanPrice) {
+    state.currentPlanPrice = window.APP_CONFIG?.monthlyPrice || 79.00;
+    state.currentPlanCycle = 'MONTHLY';
+  }
+}
+
+// Helper: pega preço atual pra exibir
+function currentPrice() {
+  return state.currentPlanPrice || window.APP_CONFIG?.monthlyPrice || 79.00;
+}
+
 // ========== ACESSO BLOQUEADO ==========
 function showAccessDenied() {
   document.body.innerHTML = `
@@ -54,7 +114,7 @@ function showAccessDenied() {
         <h1 class="font-display" style="font-size:26px;font-weight:700;margin-bottom:8px">Acesso expirado</h1>
         <p style="color:var(--text-soft);font-size:14px;line-height:1.6;margin-bottom:24px">
           Seu período grátis acabou ou seu pagamento não está em dia.<br><br>
-          Para reativar, faça um PIX de <strong style="color:var(--gold)">${bf.formatBRL(window.APP_CONFIG.monthlyPrice)}</strong> para a chave:<br>
+          Para reativar, faça um PIX de <strong style="color:var(--gold)">${bf.formatBRL(currentPrice())}</strong> para a chave:<br>
           <code style="background:var(--bg-soft);padding:8px 12px;border-radius:6px;display:inline-block;margin-top:8px;color:var(--gold)">${window.APP_CONFIG.pixKey}</code><br><br>
           Depois envie o comprovante no WhatsApp:
         </p>
@@ -85,7 +145,7 @@ function renderTrialBanner() {
               ${days === 0 ? "Trial expira hoje" : `Trial: faltam ${days} ${days === 1 ? "dia" : "dias"}`}
             </div>
             <div style="font-size:12px;color:var(--text-soft);margin-top:2px">
-              Após o trial, ${bf.formatBRL(window.APP_CONFIG.monthlyPrice)}/mês via PIX
+              Após o trial, ${bf.formatBRL(currentPrice())}/mês via PIX
             </div>
           </div>
         </div>
@@ -156,6 +216,9 @@ function showView(view, opts = {}) {
     renderAgenda();
   } else if (view === "conta") {
     renderConta();
+  } else if (view === "lembretes") {
+    viewId = "view-lembretes";
+    renderLembretes();
   }
 
   const el = document.getElementById(viewId);
@@ -324,6 +387,35 @@ async function renderDashboard() {
   const pacotesAtivos = pacotesAtivosRes.data || [];
   const todosAniversariantes = aniversariantesRes.data || [];
   const todosAtendimentos = inativosRes.data || [];
+
+  // Lembretes pendentes pra amanhã
+  let lembretesPendentes = 0;
+  try {
+    const amanhaInicio = new Date();
+    amanhaInicio.setDate(amanhaInicio.getDate() + 1);
+    amanhaInicio.setHours(0, 0, 0, 0);
+    const amanhaFim = new Date(amanhaInicio);
+    amanhaFim.setDate(amanhaFim.getDate() + 1);
+
+    const [agRes, logRes] = await Promise.all([
+      sb.from('agendamentos')
+        .select('id, cliente:clientes(telefone)')
+        .eq('user_id', state.user.id)
+        .eq('status', 'AGENDADO')
+        .gte('inicio', amanhaInicio.toISOString())
+        .lt('inicio', amanhaFim.toISOString()),
+      sb.from('reminder_log')
+        .select('agendamento_id')
+        .eq('user_id', state.user.id)
+        .gte('sent_at', new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString())
+    ]);
+    const enviadosIds = new Set((logRes.data || []).map(r => r.agendamento_id));
+    lembretesPendentes = (agRes.data || []).filter(a => !enviadosIds.has(a.id) && a.cliente?.telefone).length;
+  } catch (e) {
+    // Tabela reminder_log pode não existir ainda — ignora silenciosamente
+    lembretesPendentes = 0;
+  }
+  state.dashLembretesPendentes = lembretesPendentes;
 
   // Guarda no state pra usar nos detalhes
   state.dashAtendimentos = atendimentos;
@@ -550,6 +642,20 @@ async function renderDashboard() {
         `).join('')}
       </div>
     </div>
+
+    <!-- Lembretes 24h pendentes -->
+    ${lembretesPendentes > 0 ? `
+      <div class="card-gradient" style="margin-bottom:20px;cursor:pointer" onclick="navigate('lembretes')">
+        <div style="display:flex;align-items:center;gap:14px">
+          <div style="width:44px;height:44px;border-radius:12px;background:var(--gold);color:#0a0a0a;display:grid;place-items:center;flex-shrink:0;font-size:22px">📱</div>
+          <div style="flex:1">
+            <div style="font-size:13px;font-weight:600">Lembretes pra enviar amanhã</div>
+            <div style="font-size:11px;color:var(--text-soft);margin-top:2px">${lembretesPendentes} cliente${lembretesPendentes !== 1 ? 's' : ''} esperando confirmação</div>
+          </div>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--gold)" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+      </div>
+    ` : ''}
 
     <!-- Alertas -->
     ${(pacotesAcabando.length + pacotesVencendo.length + aniversariantes.length + clientesInativos.length + aniversariantesHoje.length) > 0 ? `
@@ -1450,6 +1556,209 @@ async function renderPacoteDetail(id) {
   `;
 }
 
+// ========== LEMBRETES 24h ==========
+async function renderLembretes() {
+  const container = document.getElementById("lembretesContent");
+  if (!container) return;
+
+  container.innerHTML = `<div style="padding:30px;text-align:center;color:var(--text-soft)">Carregando...</div>`;
+
+  // Busca agendamentos de amanhã que ainda não foram lembrados
+  // Aplica timezone Brasil pra calcular "amanhã"
+  const agora = new Date();
+  const amanhaInicio = new Date(agora);
+  amanhaInicio.setDate(amanhaInicio.getDate() + 1);
+  amanhaInicio.setHours(0, 0, 0, 0);
+  const amanhaFim = new Date(amanhaInicio);
+  amanhaFim.setDate(amanhaFim.getDate() + 1);
+
+  const [agRes, logRes] = await Promise.all([
+    sb.from('agendamentos')
+      .select(`
+        id, inicio, fim, status,
+        cliente:clientes(id, nome, telefone),
+        servico:servicos(id, nome, preco)
+      `)
+      .eq('user_id', state.user.id)
+      .eq('status', 'AGENDADO')
+      .gte('inicio', amanhaInicio.toISOString())
+      .lt('inicio', amanhaFim.toISOString())
+      .order('inicio'),
+
+    sb.from('reminder_log')
+      .select('agendamento_id')
+      .eq('user_id', state.user.id)
+      .gte('sent_at', new Date(agora.getTime() - 2 * 24 * 60 * 60 * 1000).toISOString())
+  ]);
+
+  const ags = agRes.data || [];
+  const enviadosIds = new Set((logRes.data || []).map(r => r.agendamento_id));
+
+  const pendentes = ags.filter(a => !enviadosIds.has(a.id) && a.cliente?.telefone);
+  const enviados = ags.filter(a => enviadosIds.has(a.id));
+  const semTel = ags.filter(a => !a.cliente?.telefone);
+
+  const amanha = new Date(amanhaInicio);
+  const dataStr = amanha.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' });
+
+  container.innerHTML = `
+    <div style="margin-bottom:18px">
+      <div style="font-size:11px;color:var(--text-dim);letter-spacing:1.5px;text-transform:uppercase;font-weight:600;margin-bottom:4px">Lembretes pra enviar</div>
+      <div style="font-family:'Playfair Display';font-size:22px;font-weight:600;text-transform:capitalize">${dataStr}</div>
+    </div>
+
+    ${pendentes.length === 0 && enviados.length === 0 ? `
+      <div class="empty">
+        <h2>Nada por aqui</h2>
+        <p>Você não tem agendamentos pra amanhã.<br>Quando tiver, vai aparecer aqui pra você enviar lembrete via WhatsApp.</p>
+      </div>
+    ` : ''}
+
+    ${pendentes.length > 0 ? `
+      <div class="card" style="margin-bottom:18px">
+        <div class="block-h">
+          <h3>Pendentes (${pendentes.length})</h3>
+          ${pendentes.length > 1 ? `<button class="btn btn-primary btn-sm" onclick="enviarTodosLembretes()">Enviar todos</button>` : ''}
+        </div>
+        <p style="font-size:11px;color:var(--text-dim);margin-bottom:12px">Clique no botão verde pra abrir o WhatsApp do cliente com a mensagem pronta</p>
+        ${pendentes.map(a => renderLembreteRow(a, false)).join('')}
+      </div>
+    ` : ''}
+
+    ${enviados.length > 0 ? `
+      <div class="card" style="margin-bottom:18px">
+        <div class="block-h"><h3>Já enviados (${enviados.length})</h3></div>
+        ${enviados.map(a => renderLembreteRow(a, true)).join('')}
+      </div>
+    ` : ''}
+
+    ${semTel.length > 0 ? `
+      <div class="card" style="margin-bottom:18px;border-color:rgba(224,116,116,0.25)">
+        <div class="block-h"><h3 style="color:var(--red)">Sem telefone (${semTel.length})</h3></div>
+        <p style="font-size:11px;color:var(--text-dim);margin-bottom:12px">Esses clientes não têm WhatsApp cadastrado. Adicione pra poder enviar lembrete.</p>
+        ${semTel.map(a => `
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:10px;background:var(--bg-soft);border-radius:8px;margin-bottom:6px">
+            <div>
+              <div style="font-size:13px;font-weight:600">${escapeHtml(a.cliente?.nome || '?')}</div>
+              <div style="font-size:11px;color:var(--text-dim)">${escapeHtml(a.servico?.nome || '?')} · ${new Date(a.inicio).toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'})}</div>
+            </div>
+            <button class="btn btn-ghost btn-sm" onclick="navigate('cliente-detail', {id: '${a.cliente.id}'})">Editar cliente</button>
+          </div>
+        `).join('')}
+      </div>
+    ` : ''}
+  `;
+}
+
+function renderLembreteRow(a, enviado) {
+  const hora = new Date(a.inicio).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  const firstName = (a.cliente?.nome || '').split(' ')[0];
+  const dataAmanha = new Date(a.inicio).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+  const telefone = (a.cliente?.telefone || '').replace(/\D/g, '');
+
+  // Mensagem do lembrete
+  const msg = `Oi ${firstName}! Lembrete do seu horário amanhã (${dataAmanha}) às ${hora}h.\n\n✂️ ${a.servico?.nome || 'Serviço'}\n\nSe precisar reagendar é só me avisar!`;
+  const waLink = `https://wa.me/${telefone}?text=${encodeURIComponent(msg)}`;
+
+  return `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px;background:${enviado ? 'rgba(111,207,151,0.05)' : 'var(--bg-soft)'};border:1px solid ${enviado ? 'rgba(111,207,151,0.2)' : 'var(--line)'};border-radius:8px;margin-bottom:8px;gap:10px">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px">
+          ${escapeHtml(a.cliente?.nome || '?')}
+          ${enviado ? '<span class="pill pill-green" style="font-size:9px">✓ ENVIADO</span>' : ''}
+        </div>
+        <div style="font-size:11px;color:var(--text-soft);margin-top:2px">${escapeHtml(a.servico?.nome || '?')} · ${hora} · ${bf.formatBRL(a.servico?.preco || 0)}</div>
+      </div>
+      ${enviado ? `
+        <button class="btn btn-ghost btn-sm" onclick="desmarcarLembrete('${a.id}')" style="flex-shrink:0">Reenviar</button>
+      ` : `
+        <a href="${waLink}" target="_blank" class="btn btn-success btn-sm" onclick="marcarLembreteEnviado('${a.id}')" style="flex-shrink:0;background:#25d366;border-color:#25d366;color:#fff">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="vertical-align:middle;margin-right:3px"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+          Enviar
+        </a>
+      `}
+    </div>
+  `;
+}
+
+async function marcarLembreteEnviado(agendamentoId) {
+  // Insere no log
+  await sb.from('reminder_log').insert({
+    agendamento_id: agendamentoId,
+    user_id: state.user.id,
+    channel: 'whatsapp',
+    sent_by_method: 'manual_wa_link'
+  });
+
+  // Pequeno delay pra ele realmente clicar e abrir o whats antes de renderizar de novo
+  setTimeout(() => {
+    renderLembretes();
+  }, 1000);
+}
+
+async function desmarcarLembrete(agendamentoId) {
+  if (!confirm('Marcar como NÃO enviado pra poder enviar de novo?')) return;
+
+  await sb.from('reminder_log')
+    .delete()
+    .eq('agendamento_id', agendamentoId)
+    .eq('user_id', state.user.id);
+
+  renderLembretes();
+}
+
+async function enviarTodosLembretes() {
+  if (!confirm('Isso vai abrir uma aba do WhatsApp pra cada cliente pendente. Continuar?')) return;
+
+  // Re-render pra pegar a lista atual
+  const amanhaInicio = new Date();
+  amanhaInicio.setDate(amanhaInicio.getDate() + 1);
+  amanhaInicio.setHours(0, 0, 0, 0);
+  const amanhaFim = new Date(amanhaInicio);
+  amanhaFim.setDate(amanhaFim.getDate() + 1);
+
+  const { data: ags } = await sb.from('agendamentos')
+    .select(`id, inicio, cliente:clientes(id, nome, telefone), servico:servicos(nome)`)
+    .eq('user_id', state.user.id)
+    .eq('status', 'AGENDADO')
+    .gte('inicio', amanhaInicio.toISOString())
+    .lt('inicio', amanhaFim.toISOString());
+
+  const { data: logs } = await sb.from('reminder_log')
+    .select('agendamento_id')
+    .eq('user_id', state.user.id)
+    .gte('sent_at', new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString());
+
+  const enviadosIds = new Set((logs || []).map(r => r.agendamento_id));
+  const pendentes = (ags || []).filter(a => !enviadosIds.has(a.id) && a.cliente?.telefone);
+
+  // Abre uma aba pra cada cliente
+  for (const a of pendentes) {
+    const hora = new Date(a.inicio).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    const dataAmanha = new Date(a.inicio).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+    const firstName = (a.cliente.nome || '').split(' ')[0];
+    const telefone = a.cliente.telefone.replace(/\D/g, '');
+    const msg = `Oi ${firstName}! Lembrete do seu horário amanhã (${dataAmanha}) às ${hora}h.\n\n✂️ ${a.servico?.nome || 'Serviço'}\n\nSe precisar reagendar é só me avisar!`;
+
+    window.open(`https://wa.me/${telefone}?text=${encodeURIComponent(msg)}`, '_blank');
+
+    // Loga como enviado
+    await sb.from('reminder_log').insert({
+      agendamento_id: a.id,
+      user_id: state.user.id,
+      channel: 'whatsapp',
+      sent_by_method: 'manual_wa_bulk'
+    });
+
+    // Delay pra browser não bloquear popups
+    await new Promise(r => setTimeout(r, 300));
+  }
+
+  bf.toast(`${pendentes.length} lembretes preparados!`, 'success');
+  setTimeout(() => renderLembretes(), 1500);
+}
+
+
 // ========== CONTA / CONFIGURAÇÕES ==========
 async function renderConta() {
   if (contaTab === 'servicos') {
@@ -1868,6 +2177,8 @@ async function renderNotificacoes() {
         <p style="font-size:12px;color:var(--text-dim);margin-bottom:14px">Escolhe quais alertas te importam. Você pode mudar isso a qualquer momento.</p>
 
         ${renderNotifToggle('notif_lembrete_15min', userPrefs.notif_lembrete_15min, '🕐 Lembrete 15 min antes do agendamento', 'Aviso pra você ficar pronto antes do cliente chegar')}
+        ${renderNotifToggle('notif_novo_agendamento', userPrefs.notif_novo_agendamento !== false, '📅 Novo agendamento pela página pública', 'Quando alguém marca pelo seu link público')}
+        ${renderNotifToggle('notif_lembrete_diario', userPrefs.notif_lembrete_diario !== false, '☀️ Lembrete matinal pra avisar clientes', `Push de manhã (configurado pras ${userPrefs.lembrete_diario_hora || 9}h) lembrando dos clientes pra avisar`)}
         ${renderNotifToggle('notif_pacote_acabando', userPrefs.notif_pacote_acabando, '📦 Pacote do cliente acabando', 'Quando um cliente está no último corte do pacote')}
         ${renderNotifToggle('notif_pagamento_recebido', userPrefs.notif_pagamento_recebido, '💰 Pagamento confirmado', 'Quando o admin confirma o seu PIX mensal')}
         ${renderNotifToggle('notif_trial_acabando', userPrefs.notif_trial_acabando, '⏰ Trial acabando', 'Aviso 3 dias e 1 dia antes do trial expirar')}
@@ -2059,13 +2370,13 @@ function renderContaPrincipal() {
             </div>
             <div style="display:flex;justify-content:space-between;color:var(--text-soft)">
               <span>Mensalidade após:</span>
-              <strong style="color:var(--gold)">${bf.formatBRL(window.APP_CONFIG.monthlyPrice)}</strong>
+              <strong style="color:var(--gold)">${bf.formatBRL(currentPrice())}</strong>
             </div>
           </div>
 
           <div style="margin-top:18px;background:rgba(0,0,0,0.3);padding:14px;border-radius:8px;font-size:12px;color:var(--text-soft);line-height:1.6">
             <div style="font-weight:600;color:var(--text);margin-bottom:8px">Como ativar:</div>
-            1. Faça PIX de ${bf.formatBRL(window.APP_CONFIG.monthlyPrice)} para:<br>
+            1. Faça PIX de ${bf.formatBRL(currentPrice())} para:<br>
             <code style="background:var(--bg-soft);padding:4px 8px;border-radius:4px;color:var(--gold);display:inline-block;margin-top:4px">${window.APP_CONFIG.pixKey}</code><br>
             <span style="color:var(--text-dim);font-size:11px">${window.APP_CONFIG.pixName}</span><br><br>
             2. Envie o comprovante no WhatsApp<br>
@@ -2075,7 +2386,7 @@ function renderContaPrincipal() {
             Já paguei · Enviar comprovante
           </a>
         ` : isActive ? `
-          <div style="font-family:'Playfair Display';font-size:36px;font-weight:700;color:var(--gold);line-height:1">${bf.formatBRL(window.APP_CONFIG.monthlyPrice)}<span style="font-size:14px;color:var(--text-soft);font-weight:400">/mês</span></div>
+          <div style="font-family:'Playfair Display';font-size:36px;font-weight:700;color:var(--gold);line-height:1">${bf.formatBRL(currentPrice())}<span style="font-size:14px;color:var(--text-soft);font-weight:400">/mês</span></div>
           <div style="font-size:12px;color:var(--text-soft);margin-top:6px">Plano Único · Cortify</div>
 
           <div style="margin-top:18px;padding-top:18px;border-top:1px solid var(--line);display:grid;gap:8px;font-size:12px">
@@ -3088,6 +3399,10 @@ window.toggleServicoAtivo = toggleServicoAtivo;
 // Dashboard
 window.setDashPeriodo = setDashPeriodo;
 window.openDashDetail = openDashDetail;
+// Lembretes
+window.marcarLembreteEnviado = marcarLembreteEnviado;
+window.desmarcarLembrete = desmarcarLembrete;
+window.enviarTodosLembretes = enviarTodosLembretes;
 // Mobile
 window.toggleMobileMenu = toggleMobileMenu;
 // Notifications
