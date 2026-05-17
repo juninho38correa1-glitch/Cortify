@@ -170,6 +170,28 @@
     .pricing { padding: 60px 20px; }
     .landing-nav { padding: 18px 20px; }
   }
+
+  /* Tipo de conta no cadastro */
+  .acct-radio {
+    background: var(--bg-card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-align: center;
+  }
+  .acct-radio:hover {
+    border-color: rgba(212,168,87,0.4);
+  }
+  .acct-radio.active {
+    border-color: var(--gold);
+    background: var(--gold-dim);
+    box-shadow: 0 0 0 1px var(--gold);
+  }
+  .acct-radio.active div:first-child {
+    color: var(--gold) !important;
+  }
 </style>
 </head>
 <body>
@@ -221,13 +243,33 @@
       <h2 class="auth-h">Comece grátis</h2>
       <p class="auth-sub">7 dias sem cobrança. Cancele quando quiser.</p>
 
+      <!-- Tipo de conta -->
+      <div class="field">
+        <label>Tipo de conta</label>
+        <div class="account-type-choice" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:6px">
+          <label class="acct-radio active" data-type="AUTONOMO">
+            <input type="radio" name="account_type" value="AUTONOMO" checked style="display:none">
+            <div style="font-size:11px;letter-spacing:2px;color:var(--text-dim);font-weight:600">SOZINHO</div>
+            <div style="font-family:'Playfair Display';font-size:16px;font-weight:700;margin-top:4px">Autônomo</div>
+            <div style="font-size:11px;color:var(--text-soft);margin-top:4px;line-height:1.4">Você atende seus clientes sozinho</div>
+          </label>
+          <label class="acct-radio" data-type="BARBEARIA">
+            <input type="radio" name="account_type" value="BARBEARIA" style="display:none">
+            <div style="font-size:11px;letter-spacing:2px;color:var(--text-dim);font-weight:600">EQUIPE</div>
+            <div style="font-family:'Playfair Display';font-size:16px;font-weight:700;margin-top:4px">Barbearia</div>
+            <div style="font-size:11px;color:var(--text-soft);margin-top:4px;line-height:1.4">Vários barbeiros atendendo</div>
+          </label>
+        </div>
+      </div>
+
       <div class="field">
         <label>Seu nome</label>
         <input class="input" type="text" name="name" placeholder="Marcos Silva" required>
       </div>
-      <div class="field">
-        <label>Nome da barbearia</label>
-        <input class="input" type="text" name="barbershop_name" placeholder="Don Marcos Barber" required>
+      <div class="field" id="businessNameField">
+        <label id="businessNameLabel">Como você se apresenta?</label>
+        <input class="input" type="text" name="barbershop_name" id="businessNameInput" placeholder="Marcos Barber" required>
+        <p class="field-hint" id="businessNameHint">Nome do seu trabalho (aparece nos clientes)</p>
       </div>
       <div class="field-row">
         <div class="field">
@@ -376,6 +418,7 @@
     const phone = fd.get('phone').replace(/\D/g, '');
     const email = fd.get('email').trim();
     const password = fd.get('password');
+    const accountType = fd.get('account_type') || 'AUTONOMO';
 
     if (phone.length < 10 || phone.length > 11) {
       bf.toast('Telefone inválido (precisa ter DDD + número)', 'error');
@@ -384,16 +427,19 @@
       return;
     }
 
+    // metadata para o trigger do Supabase criar o profile
+    const metadata = {
+      name,
+      barbershop_name,
+      phone: '55' + phone,
+      // Sinaliza intent de criar barbearia depois
+      wants_barbershop: accountType === 'BARBEARIA'
+    };
+
     const { data, error } = await window.sb.auth.signUp({
       email,
       password,
-      options: {
-        data: {
-          name,
-          barbershop_name,
-          phone: '55' + phone
-        }
-      }
+      options: { data: metadata }
     });
 
     if (error) {
@@ -403,9 +449,51 @@
       return;
     }
 
-    bf.toast('Conta criada! Bem-vindo ao Cortify.', 'success');
-    setTimeout(() => window.location.href = 'app.html', 800);
+    // Se escolheu Barbearia, manda direto pro app com flag pra abrir modal de criação
+    if (accountType === 'BARBEARIA') {
+      bf.toast('Conta criada! Vamos configurar sua barbearia.', 'success');
+      setTimeout(() => window.location.href = 'app.html#virar-barbearia', 800);
+    } else {
+      bf.toast('Conta criada! Bem-vindo ao Cortify.', 'success');
+      setTimeout(() => window.location.href = 'app.html', 800);
+    }
   }
+
+  // ========= ESCOLHA DE TIPO DE CONTA =========
+  document.addEventListener('change', (e) => {
+    if (e.target.name === 'account_type') {
+      // Marca radio ativo visualmente
+      document.querySelectorAll('.acct-radio').forEach(el => el.classList.remove('active'));
+      e.target.closest('.acct-radio').classList.add('active');
+
+      // Atualiza label e hint conforme tipo
+      const isBarbearia = e.target.value === 'BARBEARIA';
+      const label = document.getElementById('businessNameLabel');
+      const input = document.getElementById('businessNameInput');
+      const hint = document.getElementById('businessNameHint');
+      if (isBarbearia) {
+        label.textContent = 'Nome da barbearia';
+        input.placeholder = 'Don Marcos Barber';
+        hint.textContent = 'Você vai poder convidar barbeiros depois';
+      } else {
+        label.textContent = 'Como você se apresenta?';
+        input.placeholder = 'Marcos Barber';
+        hint.textContent = 'Nome do seu trabalho (aparece nos clientes)';
+      }
+    }
+  });
+
+  // Click no card também marca o radio
+  document.addEventListener('click', (e) => {
+    const card = e.target.closest('.acct-radio');
+    if (card) {
+      const radio = card.querySelector('input[type="radio"]');
+      if (radio && !radio.checked) {
+        radio.checked = true;
+        radio.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    }
+  });
 
   async function handleSignin(e) {
     e.preventDefault();
