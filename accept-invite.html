@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Cortify — Convite</title>
+
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0a0a0a">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/styles.css">
+
+<style>
+  body {
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    padding: 20px;
+    background: radial-gradient(ellipse at top, rgba(212,168,87,0.06) 0%, transparent 50%), var(--bg);
+  }
+  .invite-card {
+    max-width: 540px;
+    width: 100%;
+    background: linear-gradient(180deg, var(--bg-card) 0%, #131313 100%);
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    padding: 40px 36px;
+    position: relative;
+    overflow: hidden;
+  }
+  .invite-card::before {
+    content: '';
+    position: absolute; top: 0; left: 0; right: 0; height: 1px;
+    background: linear-gradient(90deg, transparent, var(--gold), transparent);
+  }
+  .invite-logo {
+    display: flex; justify-content: center; align-items: center; gap: 10px;
+    margin-bottom: 24px;
+  }
+  .invite-logo-mark {
+    width: 38px; height: 38px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--gold), var(--gold-soft));
+    display: grid; place-items: center;
+    font-family: 'Playfair Display'; font-weight: 900; font-size: 17px; color: #0a0a0a;
+  }
+  .invite-logo-text { font-family: 'Playfair Display'; font-size: 22px; font-weight: 700; }
+  .invite-logo-text .accent { color: var(--gold); }
+  .invite-title {
+    font-family: 'Playfair Display';
+    font-size: 28px;
+    font-weight: 700;
+    text-align: center;
+    line-height: 1.2;
+    margin-bottom: 8px;
+  }
+  .invite-subtitle {
+    text-align: center;
+    color: var(--text-soft);
+    font-size: 14px;
+    margin-bottom: 30px;
+  }
+  .invite-info {
+    background: rgba(212,168,87,0.06);
+    border: 1px solid rgba(212,168,87,0.25);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 24px;
+  }
+  .invite-info-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 0;
+    font-size: 13px;
+  }
+  .invite-info-label { color: var(--text-soft); }
+  .invite-info-value { color: var(--text); font-weight: 600; }
+  .invite-info-value.gold { color: var(--gold); }
+  .invite-message {
+    background: var(--bg);
+    border-radius: 8px;
+    padding: 14px;
+    margin-top: 14px;
+    font-size: 13px;
+    color: var(--text-soft);
+    font-style: italic;
+    line-height: 1.5;
+    border-left: 3px solid var(--gold);
+  }
+  .error-state, .loading-state, .success-state {
+    text-align: center;
+    padding: 40px 20px;
+  }
+  .state-icon {
+    width: 60px; height: 60px;
+    border-radius: 50%;
+    display: grid; place-items: center;
+    margin: 0 auto 16px;
+    font-size: 30px;
+  }
+  .state-icon.error { background: rgba(224,116,116,0.1); color: var(--red); }
+  .state-icon.success { background: rgba(111,207,151,0.1); color: var(--green); }
+  .state-icon.loading { background: var(--gold-dim); color: var(--gold); }
+</style>
+</head>
+<body>
+
+<div class="invite-card" id="inviteCard">
+  <div class="invite-logo">
+    <div class="invite-logo-mark">C</div>
+    <div class="invite-logo-text">Cort<span class="accent">ify</span></div>
+  </div>
+
+  <div class="loading-state" id="loadingState">
+    <div class="state-icon loading">⏳</div>
+    <p style="color:var(--text-soft);font-size:14px">Carregando convite...</p>
+  </div>
+
+  <div id="inviteContent" style="display:none"></div>
+</div>
+
+<!-- Toasts -->
+<div class="toast-container" id="toastContainer"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/config.js"></script>
+<script src="js/supabase-client.js"></script>
+
+<script>
+(async function init() {
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get('token');
+
+  if (!token) {
+    return showError('Link inválido', 'Esse link de convite não está completo. Peça um novo pro responsável da barbearia.');
+  }
+
+  // Busca info do convite (não precisa estar logado)
+  const { data, error } = await window.sb.rpc('get_invitation_by_token', { p_token: token });
+
+  if (error || !data || data.length === 0) {
+    return showError('Convite não encontrado', 'Esse convite não existe ou foi removido.');
+  }
+
+  const inv = data[0];
+
+  // Status check
+  if (inv.status === 'ACCEPTED') {
+    return showError('Convite já aceito', 'Esse convite já foi aceito anteriormente. Você pode entrar normalmente no Cortify.', true);
+  }
+  if (inv.status === 'CANCELLED') {
+    return showError('Convite cancelado', 'Esse convite foi cancelado pelo responsável da barbearia.');
+  }
+  if (inv.status === 'EXPIRED') {
+    return showError('Convite expirado', 'Esse convite passou da validade. Peça um novo.');
+  }
+
+  // Verifica se está logado
+  const { data: { user } } = await window.sb.auth.getUser();
+
+  // Renderiza info do convite
+  renderInvite(inv, user, token);
+})();
+
+function renderInvite(inv, user, token) {
+  document.getElementById('loadingState').style.display = 'none';
+  const container = document.getElementById('inviteContent');
+  container.style.display = 'block';
+
+  const roleLabel = {
+    'BARBER': 'Barbeiro',
+    'MANAGER': 'Gerente',
+    'RECEPTIONIST': 'Recepcionista'
+  }[inv.invited_role] || inv.invited_role;
+
+  // Modelo de pagamento legível
+  let pagamento = 'A combinar';
+  if (inv.proposed_commission_model === 'PERCENT') {
+    pagamento = `${inv.proposed_commission_percent}% de comissão`;
+  } else if (inv.proposed_commission_model === 'RENT') {
+    pagamento = `Aluguel R$ ${Number(inv.proposed_rent_amount || 0).toFixed(2)}/mês`;
+  } else if (inv.proposed_commission_model === 'SALARY') {
+    pagamento = `Salário R$ ${Number(inv.proposed_salary || 0).toFixed(2)}/mês`;
+  } else if (inv.proposed_commission_model === 'MIXED') {
+    pagamento = `R$ ${Number(inv.proposed_salary || 0).toFixed(2)}/mês + ${inv.proposed_commission_percent}%`;
+  }
+
+  // Caso 1: Não está logado
+  if (!user) {
+    container.innerHTML = `
+      <div class="invite-title">Você foi convidado!</div>
+      <p class="invite-subtitle">${escapeHtml(inv.invited_by_name || 'Alguém')} te convidou pra trabalhar em</p>
+
+      <div class="invite-info">
+        <div style="text-align:center;margin-bottom:14px">
+          <div style="font-family:'Playfair Display';font-size:24px;font-weight:700;color:var(--gold)">${escapeHtml(inv.barbershop_name)}</div>
+        </div>
+        <div class="invite-info-row">
+          <span class="invite-info-label">Função:</span>
+          <span class="invite-info-value">${roleLabel}</span>
+        </div>
+        <div class="invite-info-row">
+          <span class="invite-info-label">Email do convite:</span>
+          <span class="invite-info-value">${escapeHtml(inv.invited_email)}</span>
+        </div>
+        <div class="invite-info-row">
+          <span class="invite-info-label">Pagamento:</span>
+          <span class="invite-info-value gold">${pagamento}</span>
+        </div>
+        ${inv.message ? `<div class="invite-message">"${escapeHtml(inv.message)}"</div>` : ''}
+      </div>
+
+      <p style="text-align:center;color:var(--text-soft);font-size:13px;margin-bottom:16px">
+        Pra aceitar, faça login com <strong style="color:var(--gold)">${escapeHtml(inv.invited_email)}</strong> ou crie uma conta.
+      </p>
+      <a href="index.html?invite=${token}" class="btn btn-primary btn-lg" style="width:100%;text-align:center;display:block">
+        Entrar / Criar conta
+      </a>
+    `;
+    return;
+  }
+
+  // Caso 2: Está logado mas com email diferente
+  if (user.email.toLowerCase() !== inv.invited_email.toLowerCase()) {
+    container.innerHTML = `
+      <div class="state-icon error">⚠️</div>
+      <h2 style="font-family:'Playfair Display';text-align:center;font-size:22px;margin-bottom:12px">Email diferente</h2>
+      <p style="text-align:center;color:var(--text-soft);font-size:13px;line-height:1.6;margin-bottom:20px">
+        Esse convite é pra <strong style="color:var(--gold)">${escapeHtml(inv.invited_email)}</strong><br>
+        Mas você está logado como <strong>${escapeHtml(user.email)}</strong>.
+      </p>
+      <button class="btn btn-ghost" style="width:100%;margin-bottom:8px" onclick="logout()">Sair</button>
+      <a href="app.html" class="btn btn-ghost" style="width:100%;display:block;text-align:center">Ir pro Cortify</a>
+    `;
+    return;
+  }
+
+  // Caso 3: Está logado e tudo certo — pode aceitar
+  container.innerHTML = `
+    <div class="invite-title">Você foi convidado!</div>
+    <p class="invite-subtitle">${escapeHtml(inv.invited_by_name || 'Alguém')} te convidou pra trabalhar em</p>
+
+    <div class="invite-info">
+      <div style="text-align:center;margin-bottom:14px">
+        <div style="font-family:'Playfair Display';font-size:24px;font-weight:700;color:var(--gold)">${escapeHtml(inv.barbershop_name)}</div>
+      </div>
+      <div class="invite-info-row">
+        <span class="invite-info-label">Função:</span>
+        <span class="invite-info-value">${roleLabel}</span>
+      </div>
+      <div class="invite-info-row">
+        <span class="invite-info-label">Pagamento:</span>
+        <span class="invite-info-value gold">${pagamento}</span>
+      </div>
+      ${inv.message ? `<div class="invite-message">"${escapeHtml(inv.message)}"</div>` : ''}
+    </div>
+
+    <button class="btn btn-primary btn-lg" style="width:100%;margin-bottom:8px" onclick="aceitar('${token}', this)">
+      Aceitar e entrar na equipe
+    </button>
+    <a href="app.html" class="btn btn-ghost" style="width:100%;display:block;text-align:center">Decidir depois</a>
+  `;
+}
+
+async function aceitar(token, btn) {
+  btn.disabled = true;
+  btn.textContent = 'Aceitando...';
+
+  const { data, error } = await window.sb.rpc('accept_barbershop_invitation', { p_token: token });
+
+  if (error) {
+    bf.toast('Erro: ' + error.message, 'error');
+    btn.disabled = false;
+    btn.textContent = 'Aceitar e entrar na equipe';
+    return;
+  }
+  if (data && !data.success) {
+    bf.toast('Erro: ' + data.error, 'error');
+    btn.disabled = false;
+    btn.textContent = 'Aceitar e entrar na equipe';
+    return;
+  }
+
+  showSuccess();
+}
+
+function showSuccess() {
+  document.getElementById('loadingState').style.display = 'none';
+  const container = document.getElementById('inviteContent');
+  container.style.display = 'block';
+  container.innerHTML = `
+    <div class="success-state">
+      <div class="state-icon success">✓</div>
+      <h2 style="font-family:'Playfair Display';font-size:24px;margin-bottom:8px">Bem-vindo à equipe!</h2>
+      <p style="color:var(--text-soft);font-size:14px;line-height:1.6;margin-bottom:24px">
+        Você agora faz parte da barbearia. Vamos te levar pro painel.
+      </p>
+      <a href="app.html" class="btn btn-primary btn-lg" style="display:inline-block;text-decoration:none">
+        Ir pro Cortify
+      </a>
+    </div>
+  `;
+  setTimeout(() => window.location.href = 'app.html', 2500);
+}
+
+function showError(title, msg, showAppLink = false) {
+  document.getElementById('loadingState').style.display = 'none';
+  const container = document.getElementById('inviteContent');
+  container.style.display = 'block';
+  container.innerHTML = `
+    <div class="error-state">
+      <div class="state-icon error">⚠️</div>
+      <h2 style="font-family:'Playfair Display';font-size:24px;margin-bottom:8px">${escapeHtml(title)}</h2>
+      <p style="color:var(--text-soft);font-size:14px;line-height:1.6;margin-bottom:24px">${escapeHtml(msg)}</p>
+      ${showAppLink ? `<a href="app.html" class="btn btn-primary">Ir pro Cortify</a>` : `<a href="index.html" class="btn btn-ghost">Voltar ao início</a>`}
+    </div>
+  `;
+}
+
+async function logout() {
+  await window.sb.auth.signOut();
+  window.location.reload();
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[m]);
+}
+</script>
+</body>
+</html>
