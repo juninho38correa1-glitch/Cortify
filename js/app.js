@@ -44,6 +44,11 @@ const state = {
   // Suporte ao botão voltar do navegador
   window.addEventListener("popstate", handleNavigate);
   handleNavigate();
+
+  // Se veio do cadastro como barbearia, abre modal automaticamente
+  if (window.location.hash === '#virar-barbearia' && state.profile.account_type === 'AUTONOMO') {
+    setTimeout(() => openVirarBarbeariaModal(), 500);
+  }
 })();
 
 // ========== CARREGAR SUBSCRIPTION + PLANO ATUAL ==========
@@ -176,6 +181,34 @@ async function loadInitialData() {
   state.clientes = clientesRes.data || [];
   state.servicos = servicosRes.data || [];
   state.pacotes = pacotesRes.data || [];
+
+  // Carrega info de barbearia (se for membro de alguma)
+  await loadBarbeariaInfo();
+}
+
+// Carrega info de barbearia do usuário (se for membro)
+async function loadBarbeariaInfo() {
+  state.barbearia = null;
+  state.barbeariaRole = null;
+
+  if (state.profile.account_type !== 'BARBERSHOP_MEMBER') {
+    return; // usuário é autônomo, nada a fazer
+  }
+
+  const { data, error } = await sb.rpc('get_user_barbershop');
+  if (error || !data || data.length === 0) {
+    console.warn('Usuário é BARBERSHOP_MEMBER mas não tem barbearia vinculada');
+    return;
+  }
+
+  const b = data[0];
+  state.barbearia = {
+    id: b.barbershop_id,
+    slug: b.barbershop_slug,
+    name: b.barbershop_name,
+  };
+  state.barbeariaRole = b.role;
+  state.barbeariaIsOwner = b.is_owner;
 }
 
 // ========== NAVEGAÇÃO ==========
@@ -546,6 +579,8 @@ async function renderDashboard() {
 
   // RENDER FINAL
   container.innerHTML = `
+    ${renderBecomeBarbeariaBanner()}
+
     <!-- Linha principal de receita -->
     <div class="stats-grid" style="margin-bottom:20px">
       <div class="stat-card gold dashboard-clickable" style="grid-column:span 2;min-width:280px;cursor:pointer" onclick="openDashDetail('faturamento')">
@@ -1770,6 +1805,9 @@ async function renderConta() {
   if (contaTab === 'notif') {
     return renderNotificacoes();
   }
+  if (contaTab === 'barbearia') {
+    return renderBarbeariaTab();
+  }
   return renderContaPrincipal();
 }
 
@@ -2257,6 +2295,324 @@ async function toggleNotificationSubscription(activate) {
       bf.toast('Erro: ' + result.error, 'error');
     }
   }
+}
+
+// ============================================================
+// ========== BARBEARIA (Fase 5.2) ==========
+// ============================================================
+
+// Aba "Barbearia" nas Configurações
+async function renderBarbeariaTab() {
+  const container = document.getElementById("contaContent");
+  container.innerHTML = `<div style="padding:30px;text-align:center;color:var(--text-soft)">Carregando...</div>`;
+
+  const isAutonomo = state.profile.account_type === 'AUTONOMO';
+
+  if (isAutonomo) {
+    // Tela "Virar Barbearia"
+    container.innerHTML = `
+      <div style="max-width:680px;margin:0 auto">
+        <div class="card-gradient" style="margin-bottom:20px">
+          <div style="display:flex;align-items:flex-start;gap:16px;flex-wrap:wrap">
+            <div style="width:56px;height:56px;border-radius:14px;background:var(--gold);color:#0a0a0a;display:grid;place-items:center;font-size:28px;flex-shrink:0">🚀</div>
+            <div style="flex:1;min-width:200px">
+              <h2 class="font-display" style="font-size:24px;font-weight:700;margin-bottom:6px">Quer expandir seu negócio?</h2>
+              <p style="color:var(--text-soft);font-size:13px;line-height:1.6">Vire uma barbearia e ganhe equipe, página pública compartilhada, dashboard consolidado e mais.</p>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px">
+          <div class="card">
+            <div style="font-size:11px;letter-spacing:2px;color:var(--text-dim);font-weight:600;margin-bottom:8px">VOCÊ HOJE</div>
+            <div class="font-display" style="font-size:18px;font-weight:700;margin-bottom:14px">Autônomo</div>
+            <ul style="list-style:none;padding:0;margin:0;font-size:12.5px;color:var(--text-soft);line-height:1.9">
+              <li>✓ Você atende sozinho</li>
+              <li>✓ Página pública individual</li>
+              <li>✓ Sua agenda, seus clientes</li>
+            </ul>
+          </div>
+          <div class="card-gold">
+            <div style="font-size:11px;letter-spacing:2px;color:var(--gold);font-weight:600;margin-bottom:8px">SE VIRAR BARBEARIA</div>
+            <div class="font-display" style="font-size:18px;font-weight:700;margin-bottom:14px">Barbearia</div>
+            <ul style="list-style:none;padding:0;margin:0;font-size:12.5px;color:var(--text-soft);line-height:1.9">
+              <li>✓ Convide outros barbeiros</li>
+              <li>✓ Página pública da barbearia</li>
+              <li>✓ Dashboard de equipe</li>
+              <li>✓ Comissões automáticas</li>
+            </ul>
+          </div>
+        </div>
+
+        <div style="text-align:center;margin-top:20px">
+          <button class="btn btn-primary btn-lg" onclick="openVirarBarbeariaModal()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Virar Barbearia
+          </button>
+        </div>
+
+        <div style="background:rgba(212,168,87,0.04);border:1px solid rgba(212,168,87,0.15);border-radius:8px;padding:14px;margin-top:24px;font-size:12px;color:var(--text-soft);line-height:1.6">
+          💡 <strong style="color:var(--gold)">Como funciona:</strong> Você cria a barbearia (nome, URL pública, etc) e escolhe o que fazer com seus dados atuais. Seus clientes podem ser migrados pra barbearia ou ficar com você. Você pode voltar pro modo autônomo depois.
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  // Modo barbearia: mostra resumo
+  if (!state.barbearia) {
+    container.innerHTML = `<div style="padding:30px;text-align:center;color:var(--text-soft)">Erro ao carregar dados da barbearia.</div>`;
+    return;
+  }
+
+  // Carrega dados extras da barbearia
+  const [barbeariaRes, membrosRes] = await Promise.all([
+    sb.from('barbershops').select('*').eq('id', state.barbearia.id).maybeSingle(),
+    sb.from('barbershop_members')
+      .select('*, profile:profiles(name, email, phone)')
+      .eq('barbershop_id', state.barbearia.id)
+      .eq('active', true)
+      .order('role'),
+  ]);
+
+  const barbearia = barbeariaRes.data || {};
+  const membros = membrosRes.data || [];
+
+  container.innerHTML = `
+    <div style="max-width:780px;margin:0 auto">
+      <!-- Card Barbearia -->
+      <div class="card-gradient" style="margin-bottom:18px">
+        <div class="block-h">
+          <h3>Minha Barbearia</h3>
+          <span class="pill ${state.barbeariaIsOwner ? 'pill-gold' : 'pill-soft'}">${state.barbeariaRole}</span>
+        </div>
+        <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:14px">
+          <div style="flex:1;min-width:240px">
+            <div style="font-size:10px;letter-spacing:1.5px;color:var(--text-dim);font-weight:600;text-transform:uppercase">Nome</div>
+            <div class="font-display" style="font-size:22px;font-weight:700;margin-top:4px">${escapeHtml(barbearia.name || state.barbearia.name)}</div>
+          </div>
+          <div style="flex:1;min-width:200px">
+            <div style="font-size:10px;letter-spacing:1.5px;color:var(--text-dim);font-weight:600;text-transform:uppercase">URL pública</div>
+            <div style="font-family:'JetBrains Mono', monospace;font-size:13px;color:var(--gold);margin-top:6px;word-break:break-all">cortify/?b=${escapeHtml(barbearia.slug || state.barbearia.slug)}</div>
+            <button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="copiarLink('${window.location.origin}/book.html?b=${escapeHtml(barbearia.slug || state.barbearia.slug)}')">
+              Copiar link
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Membros -->
+      <div class="card" style="margin-bottom:18px">
+        <div class="block-h">
+          <h3>Equipe (${membros.length})</h3>
+          ${state.barbeariaIsOwner ? `
+            <button class="btn btn-primary btn-sm" onclick="bf.toast('Em breve: convidar barbeiros', 'info')">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Convidar
+            </button>
+          ` : ''}
+        </div>
+        ${membros.length === 0 ? `
+          <p style="color:var(--text-dim);font-size:13px;text-align:center;padding:18px">Nenhum membro</p>
+        ` : membros.map(m => `
+          <div style="display:flex;align-items:center;gap:14px;padding:10px 0;border-bottom:1px solid var(--line-soft)">
+            <div class="avatar avatar-sm">${bf.getInitials(m.profile?.name || '?')}</div>
+            <div style="flex:1;min-width:0">
+              <div style="font-size:13px;font-weight:600">${escapeHtml(m.display_name || m.profile?.name || '?')}</div>
+              <div style="font-size:11px;color:var(--text-dim);margin-top:2px">${escapeHtml(m.profile?.email || '')}</div>
+            </div>
+            <span class="pill ${m.role === 'OWNER' ? 'pill-gold' : 'pill-soft'}" style="font-size:10px">${m.role}</span>
+          </div>
+        `).join('')}
+      </div>
+
+      <!-- Configurações futuras -->
+      <div style="background:rgba(212,168,87,0.04);border:1px solid rgba(212,168,87,0.15);border-radius:8px;padding:14px;font-size:12px;color:var(--text-soft);line-height:1.6">
+        🚧 <strong style="color:var(--gold)">Próximas funcionalidades:</strong> Convidar barbeiros, gerenciar comissões, dashboard consolidado e configurações avançadas estão sendo construídos.
+      </div>
+    </div>
+  `;
+}
+
+// ========== MODAL "VIRAR BARBEARIA" ==========
+function openVirarBarbeariaModal() {
+  // Pre-preenche com dados do profile
+  const form = document.getElementById('virarBarbeariaForm');
+  if (!form) return;
+  form.reset();
+
+  // Sugere nome baseado em profile.barbershop_name
+  const sugestao = state.profile.barbershop_name || state.profile.name || '';
+  if (sugestao) {
+    form.name.value = sugestao;
+    // Já gera o slug
+    onBarbeariaNameInput();
+  }
+
+  // Pre-preenche WhatsApp/telefone
+  const phone = (state.profile.phone || '').replace(/^55/, '');
+  if (phone) {
+    form.whatsapp.value = phone;
+  }
+
+  document.getElementById('virarBarbeariaModal').classList.add('open');
+}
+
+// Gera slug automaticamente a partir do nome
+let slugDebounce = null;
+async function onBarbeariaNameInput() {
+  const name = document.getElementById('vbName').value.trim();
+  if (!name) return;
+
+  clearTimeout(slugDebounce);
+  slugDebounce = setTimeout(async () => {
+    const { data, error } = await sb.rpc('suggest_barbershop_slug', { p_name: name });
+    if (!error && data) {
+      const slugInput = document.getElementById('vbSlug');
+      if (!slugInput.value || slugInput.dataset.autogen === 'true') {
+        slugInput.value = data;
+        slugInput.dataset.autogen = 'true';
+        validateSlug();
+      }
+    }
+  }, 300);
+}
+
+// Valida slug em tempo real
+let slugValidateDebounce = null;
+async function validateSlug() {
+  const slug = document.getElementById('vbSlug').value.trim().toLowerCase();
+  const feedback = document.getElementById('vbSlugFeedback');
+  document.getElementById('vbSlug').dataset.autogen = 'false'; // user editou
+
+  feedback.className = '';
+
+  if (!slug) {
+    feedback.textContent = 'Apenas letras minúsculas, números e traços';
+    return;
+  }
+
+  if (!/^[a-z0-9-]{3,50}$/.test(slug)) {
+    feedback.textContent = '⚠️ Use apenas letras minúsculas, números e traços (3-50 caracteres)';
+    feedback.classList.add('invalid');
+    return;
+  }
+
+  clearTimeout(slugValidateDebounce);
+  slugValidateDebounce = setTimeout(async () => {
+    const { data, error } = await sb.rpc('is_barbershop_slug_available', { p_slug: slug });
+    if (data === true) {
+      feedback.textContent = '✓ Disponível: cortify/?b=' + slug;
+      feedback.classList.add('valid');
+    } else {
+      feedback.textContent = '⚠️ Esse slug já está em uso';
+      feedback.classList.add('invalid');
+    }
+  }, 400);
+}
+
+// Click nas opções de migração
+document.addEventListener('click', (e) => {
+  const opt = e.target.closest('.migration-radio');
+  if (opt && document.getElementById('virarBarbeariaModal')?.classList.contains('open')) {
+    document.querySelectorAll('.migration-radio').forEach(o => o.classList.remove('active'));
+    opt.classList.add('active');
+    const radio = opt.querySelector('input[type="radio"]');
+    if (radio) radio.checked = true;
+  }
+});
+
+// Confirma criação da barbearia
+async function confirmarVirarBarbearia(e) {
+  e.preventDefault();
+  const btn = document.getElementById('vbSaveBtn');
+  btn.disabled = true;
+  btn.textContent = 'Criando...';
+
+  const fd = new FormData(e.target);
+  const name = fd.get('name').trim();
+  const slug = fd.get('slug').trim().toLowerCase();
+  const whatsapp = fd.get('whatsapp').replace(/\D/g, '');
+  const phone = fd.get('phone').replace(/\D/g, '');
+  const description = fd.get('description').trim();
+  const migration_mode = fd.get('migration_mode');
+
+  // Confirmação final
+  let migracaoLabel = '';
+  if (migration_mode === 'ALL') migracaoLabel = 'TODOS os seus dados serão migrados';
+  else if (migration_mode === 'CLIENTS_ONLY') migracaoLabel = 'só clientes e serviços serão migrados';
+  else migracaoLabel = 'a barbearia começa do ZERO';
+
+  if (!confirm(`Confirmar criação da barbearia "${name}"?\n\n• ${migracaoLabel}\n• Você vira OWNER\n• Sua conta muda de Autônomo pra Barbearia`)) {
+    btn.disabled = false;
+    btn.textContent = 'Criar Barbearia';
+    return;
+  }
+
+  const { data, error } = await sb.rpc('create_barbershop_from_autonomo', {
+    p_name: name,
+    p_slug: slug,
+    p_phone: phone ? '55' + phone : null,
+    p_whatsapp: whatsapp ? '55' + whatsapp : null,
+    p_description: description || null,
+    p_migration_mode: migration_mode,
+  });
+
+  if (error) {
+    bf.toast('Erro: ' + error.message, 'error');
+    btn.disabled = false;
+    btn.textContent = 'Criar Barbearia';
+    return;
+  }
+
+  if (data && !data.success) {
+    bf.toast('Erro: ' + data.error, 'error');
+    btn.disabled = false;
+    btn.textContent = 'Criar Barbearia';
+    return;
+  }
+
+  // SUCESSO!
+  const migrated = data.migrated || {};
+  bf.toast(
+    `🎉 Barbearia criada! ${migrated.clientes || 0} cliente(s), ${migrated.servicos || 0} serviço(s) migrados.`,
+    'success'
+  );
+
+  closeModal('virarBarbeariaModal');
+
+  // Reload completo - state agora precisa virar BARBERSHOP_MEMBER
+  setTimeout(() => window.location.href = 'app.html#conta', 1500);
+}
+
+// Banner no Dashboard pra autônomo virar barbearia
+function renderBecomeBarbeariaBanner() {
+  if (!state.profile || state.profile.account_type !== 'AUTONOMO') return '';
+
+  // Banner que aparece só no dashboard, dispensável
+  const dismissed = sessionStorage.getItem('cortify-barbearia-banner-dismissed');
+  if (dismissed === '1') return '';
+
+  return `
+    <div class="card-gold" style="margin-bottom:20px;position:relative" id="barbeariaBanner">
+      <button onclick="dismissBarbeariaBanner()" style="position:absolute;top:12px;right:12px;width:24px;height:24px;background:rgba(0,0,0,0.2);border:none;border-radius:50%;color:var(--text-soft);cursor:pointer;display:grid;place-items:center" title="Fechar">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+      <div style="display:flex;align-items:center;gap:14px;padding-right:30px">
+        <div style="width:44px;height:44px;border-radius:12px;background:var(--gold);color:#0a0a0a;display:grid;place-items:center;flex-shrink:0;font-size:22px">🚀</div>
+        <div style="flex:1">
+          <div style="font-size:14px;font-weight:600">Quer expandir seu negócio?</div>
+          <div style="font-size:11px;color:var(--text-soft);margin-top:2px">Vire uma Barbearia · adicione barbeiros à sua equipe</div>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="openVirarBarbeariaModal()">Saiba mais</button>
+      </div>
+    </div>
+  `;
+}
+
+function dismissBarbeariaBanner() {
+  sessionStorage.setItem('cortify-barbearia-banner-dismissed', '1');
+  document.getElementById('barbeariaBanner')?.remove();
 }
 
 async function renderServicos() {
@@ -3079,6 +3435,7 @@ function setContaTab(tab) {
   document.getElementById("cfgTabServicos").classList.toggle("active", tab === "servicos");
   document.getElementById("cfgTabPublic")?.classList.toggle("active", tab === "publica");
   document.getElementById("cfgTabNotif")?.classList.toggle("active", tab === "notif");
+  document.getElementById("cfgTabBarbearia")?.classList.toggle("active", tab === "barbearia");
   renderConta();
 }
 
@@ -3418,3 +3775,10 @@ window.openBlockModal = openBlockModal;
 window.closeBlockModal = closeBlockModal;
 window.criarBlock = criarBlock;
 window.deleteBlock = deleteBlock;
+// Barbearia (Fase 5.2)
+window.openVirarBarbeariaModal = openVirarBarbeariaModal;
+window.confirmarVirarBarbearia = confirmarVirarBarbearia;
+window.onBarbeariaNameInput = onBarbeariaNameInput;
+window.validateSlug = validateSlug;
+window.dismissBarbeariaBanner = dismissBarbeariaBanner;
+window.renderBarbeariaTab = renderBarbeariaTab;
