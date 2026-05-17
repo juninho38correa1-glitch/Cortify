@@ -2366,17 +2366,23 @@ async function renderBarbeariaTab() {
   }
 
   // Carrega dados extras da barbearia
-  const [barbeariaRes, membrosRes] = await Promise.all([
+  const [barbeariaRes, membrosRes, convitesRes] = await Promise.all([
     sb.from('barbershops').select('*').eq('id', state.barbearia.id).maybeSingle(),
     sb.from('barbershop_members')
       .select('*, profile:profiles(name, email, phone)')
       .eq('barbershop_id', state.barbearia.id)
       .eq('active', true)
       .order('role'),
+    // Lista convites pendentes (só dá pra OWNER/MANAGER)
+    ['OWNER', 'MANAGER'].includes(state.barbeariaRole)
+      ? sb.rpc('list_barbershop_invitations', { p_barbershop_id: state.barbearia.id })
+      : Promise.resolve({ data: [] }),
   ]);
 
   const barbearia = barbeariaRes.data || {};
   const membros = membrosRes.data || [];
+  const convites = (convitesRes.data || []).filter(c => c.status === 'PENDING');
+  const canManage = ['OWNER', 'MANAGER'].includes(state.barbeariaRole);
 
   container.innerHTML = `
     <div style="max-width:780px;margin:0 auto">
@@ -2401,12 +2407,12 @@ async function renderBarbeariaTab() {
         </div>
       </div>
 
-      <!-- Membros -->
+      <!-- Membros ativos -->
       <div class="card" style="margin-bottom:18px">
         <div class="block-h">
           <h3>Equipe (${membros.length})</h3>
-          ${state.barbeariaIsOwner ? `
-            <button class="btn btn-primary btn-sm" onclick="bf.toast('Em breve: convidar barbeiros', 'info')">
+          ${canManage ? `
+            <button class="btn btn-primary btn-sm" onclick="openConvidarMembroModal()">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
               Convidar
             </button>
@@ -2415,20 +2421,58 @@ async function renderBarbeariaTab() {
         ${membros.length === 0 ? `
           <p style="color:var(--text-dim);font-size:13px;text-align:center;padding:18px">Nenhum membro</p>
         ` : membros.map(m => `
-          <div style="display:flex;align-items:center;gap:14px;padding:10px 0;border-bottom:1px solid var(--line-soft)">
+          <div style="display:flex;align-items:center;gap:14px;padding:12px 0;border-bottom:1px solid var(--line-soft)">
             <div class="avatar avatar-sm">${bf.getInitials(m.profile?.name || '?')}</div>
             <div style="flex:1;min-width:0">
               <div style="font-size:13px;font-weight:600">${escapeHtml(m.display_name || m.profile?.name || '?')}</div>
               <div style="font-size:11px;color:var(--text-dim);margin-top:2px">${escapeHtml(m.profile?.email || '')}</div>
+              ${m.commission_model && m.commission_model !== 'NONE' ? `
+                <div style="font-size:10px;color:var(--text-soft);margin-top:3px">
+                  ${m.commission_model === 'PERCENT' ? `💰 ${m.commission_percent}% de comissão` : ''}
+                  ${m.commission_model === 'RENT' ? `🏠 Aluguel ${bf.formatBRL(m.rent_amount)}/mês` : ''}
+                  ${m.commission_model === 'SALARY' ? `💵 ${bf.formatBRL(m.salary_amount)}/mês` : ''}
+                  ${m.commission_model === 'MIXED' ? `💵 ${bf.formatBRL(m.salary_amount)}/mês + ${m.commission_percent}%` : ''}
+                </div>
+              ` : ''}
             </div>
             <span class="pill ${m.role === 'OWNER' ? 'pill-gold' : 'pill-soft'}" style="font-size:10px">${m.role}</span>
+            ${canManage && m.role !== 'OWNER' && m.user_id !== state.user.id ? `
+              <button class="icon-btn" title="Remover membro" onclick="removerMembro('${m.id}', '${escapeHtml(m.profile?.name || 'esse membro').replace(/'/g, "\\'")}')">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+              </button>
+            ` : ''}
           </div>
         `).join('')}
       </div>
 
-      <!-- Configurações futuras -->
+      <!-- Convites pendentes -->
+      ${canManage && convites.length > 0 ? `
+        <div class="card" style="margin-bottom:18px">
+          <div class="block-h">
+            <h3>Convites pendentes (${convites.length})</h3>
+          </div>
+          ${convites.map(c => {
+            const expira = Math.ceil((new Date(c.expires_at) - new Date()) / (1000 * 60 * 60 * 24));
+            return `
+            <div style="display:flex;align-items:center;gap:14px;padding:12px 0;border-bottom:1px solid var(--line-soft)">
+              <div style="width:36px;height:36px;border-radius:50%;background:rgba(212,168,87,0.1);color:var(--gold);display:grid;place-items:center;flex-shrink:0;font-size:16px">✉️</div>
+              <div style="flex:1;min-width:0">
+                <div style="font-size:13px;font-weight:600">${escapeHtml(c.invited_name || c.invited_email)}</div>
+                <div style="font-size:11px;color:var(--text-dim);margin-top:2px">${escapeHtml(c.invited_email)} · ${c.invited_role}</div>
+                <div style="font-size:10px;color:var(--text-soft);margin-top:3px">⏳ Expira em ${expira} dia${expira !== 1 ? 's' : ''}</div>
+              </div>
+              <button class="btn btn-ghost btn-sm" onclick="copiarLinkConvite('${c.id}')">📋 Link</button>
+              <button class="icon-btn" title="Cancelar convite" onclick="cancelarConvite('${c.id}')">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>`;
+          }).join('')}
+        </div>
+      ` : ''}
+
+      <!-- Info -->
       <div style="background:rgba(212,168,87,0.04);border:1px solid rgba(212,168,87,0.15);border-radius:8px;padding:14px;font-size:12px;color:var(--text-soft);line-height:1.6">
-        🚧 <strong style="color:var(--gold)">Próximas funcionalidades:</strong> Convidar barbeiros, gerenciar comissões, dashboard consolidado e configurações avançadas estão sendo construídos.
+        💡 <strong style="color:var(--gold)">Como funciona:</strong> Convide barbeiros pelo email. Eles recebem um link pra aceitar. Depois de aceitar, aparecem aqui na equipe e podem atender clientes.
       </div>
     </div>
   `;
@@ -2613,6 +2657,162 @@ function renderBecomeBarbeariaBanner() {
 function dismissBarbeariaBanner() {
   sessionStorage.setItem('cortify-barbearia-banner-dismissed', '1');
   document.getElementById('barbeariaBanner')?.remove();
+}
+
+// ============================================================
+// ========== CONVIDAR MEMBROS DA BARBEARIA ==========
+// ============================================================
+
+function openConvidarMembroModal() {
+  if (!state.barbearia) return;
+  if (!['OWNER', 'MANAGER'].includes(state.barbeariaRole)) {
+    bf.toast('Você não tem permissão pra convidar', 'error');
+    return;
+  }
+
+  // Reseta form
+  const form = document.getElementById('convidarMembroForm');
+  if (!form) return;
+  form.reset();
+
+  // Default: BARBER + sem comissão
+  toggleCommissionFields('NONE');
+
+  document.getElementById('convidarMembroModal').classList.add('open');
+}
+
+// Mostra/esconde campos de comissão conforme modelo escolhido
+function toggleCommissionFields(modelo) {
+  const fieldPercent = document.getElementById('fieldCommissionPercent');
+  const fieldRent = document.getElementById('fieldRentAmount');
+  const fieldSalary = document.getElementById('fieldSalary');
+
+  if (!fieldPercent) return;
+
+  fieldPercent.style.display = ['PERCENT', 'MIXED'].includes(modelo) ? 'block' : 'none';
+  fieldRent.style.display = modelo === 'RENT' ? 'block' : 'none';
+  fieldSalary.style.display = ['SALARY', 'MIXED'].includes(modelo) ? 'block' : 'none';
+
+  // Atualiza visual dos cards
+  document.querySelectorAll('.commission-radio').forEach(el => {
+    el.classList.toggle('active', el.dataset.model === modelo);
+  });
+}
+
+// Cria convite
+async function enviarConvite(e) {
+  e.preventDefault();
+  const btn = document.getElementById('convidarSaveBtn');
+  btn.disabled = true;
+  btn.textContent = 'Enviando...';
+
+  const fd = new FormData(e.target);
+  const payload = {
+    p_barbershop_id: state.barbearia.id,
+    p_invited_email: fd.get('email').trim().toLowerCase(),
+    p_invited_name: fd.get('name')?.trim() || null,
+    p_invited_role: fd.get('role'),
+    p_commission_model: fd.get('commission_model'),
+    p_message: fd.get('message')?.trim() || null,
+  };
+
+  const modelo = payload.p_commission_model;
+  if (['PERCENT', 'MIXED'].includes(modelo)) {
+    payload.p_commission_percent = Number(fd.get('commission_percent') || 0);
+  }
+  if (modelo === 'RENT') {
+    payload.p_rent_amount = Number(fd.get('rent_amount') || 0);
+  }
+  if (['SALARY', 'MIXED'].includes(modelo)) {
+    payload.p_salary = Number(fd.get('salary') || 0);
+  }
+
+  const { data, error } = await sb.rpc('create_barbershop_invitation', payload);
+
+  btn.disabled = false;
+  btn.textContent = 'Enviar convite';
+
+  if (error) {
+    bf.toast('Erro: ' + error.message, 'error');
+    return;
+  }
+  if (data && !data.success) {
+    bf.toast('Erro: ' + data.error, 'error');
+    return;
+  }
+
+  // Sucesso! Mostra link pra compartilhar
+  const link = `${window.location.origin}/accept-invite.html?token=${data.token}`;
+
+  // Copia automaticamente
+  navigator.clipboard?.writeText(link).catch(() => {});
+
+  bf.toast('✓ Convite criado! Link copiado pra área de transferência.', 'success');
+  closeModal('convidarMembroModal');
+
+  // Re-render aba pra mostrar convite na lista
+  setTimeout(() => renderBarbeariaTab(), 300);
+}
+
+// Copiar link de um convite existente
+async function copiarLinkConvite(invitationId) {
+  // Busca token desse convite
+  const { data, error } = await sb
+    .from('barbershop_invitations')
+    .select('token')
+    .eq('id', invitationId)
+    .maybeSingle();
+
+  if (error || !data) {
+    bf.toast('Erro ao buscar convite', 'error');
+    return;
+  }
+
+  const link = `${window.location.origin}/accept-invite.html?token=${data.token}`;
+  try {
+    await navigator.clipboard.writeText(link);
+    bf.toast('Link copiado!', 'success');
+  } catch (e) {
+    prompt('Copie o link:', link);
+  }
+}
+
+// Cancelar convite
+async function cancelarConvite(invitationId) {
+  if (!confirm('Cancelar esse convite? O link não funcionará mais.')) return;
+
+  const { data, error } = await sb.rpc('cancel_barbershop_invitation', { p_invitation_id: invitationId });
+
+  if (error) {
+    bf.toast('Erro: ' + error.message, 'error');
+    return;
+  }
+  if (data && !data.success) {
+    bf.toast('Erro: ' + data.error, 'error');
+    return;
+  }
+
+  bf.toast('Convite cancelado', 'success');
+  renderBarbeariaTab();
+}
+
+// Remover membro
+async function removerMembro(memberId, nome) {
+  if (!confirm(`Remover ${nome} da barbearia?\n\nO histórico de atendimentos dele será mantido, mas ele não terá mais acesso.`)) return;
+
+  const { data, error } = await sb.rpc('remove_barbershop_member', { p_member_id: memberId });
+
+  if (error) {
+    bf.toast('Erro: ' + error.message, 'error');
+    return;
+  }
+  if (data && !data.success) {
+    bf.toast('Erro: ' + data.error, 'error');
+    return;
+  }
+
+  bf.toast('Membro removido', 'success');
+  renderBarbeariaTab();
 }
 
 async function renderServicos() {
@@ -3782,3 +3982,10 @@ window.onBarbeariaNameInput = onBarbeariaNameInput;
 window.validateSlug = validateSlug;
 window.dismissBarbeariaBanner = dismissBarbeariaBanner;
 window.renderBarbeariaTab = renderBarbeariaTab;
+// Convidar membros (Fase 5.2 entrega 2)
+window.openConvidarMembroModal = openConvidarMembroModal;
+window.toggleCommissionFields = toggleCommissionFields;
+window.enviarConvite = enviarConvite;
+window.copiarLinkConvite = copiarLinkConvite;
+window.cancelarConvite = cancelarConvite;
+window.removerMembro = removerMembro;
