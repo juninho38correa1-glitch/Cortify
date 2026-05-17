@@ -292,11 +292,12 @@
     <!-- Conta view -->
     <div id="view-conta" class="view">
       <div class="page-header"><div><h1>Configurações</h1><p class="sub">Sua conta, plano e serviços</p></div></div>
-      <div class="tabs" style="margin-bottom:20px">
+      <div class="tabs" style="margin-bottom:20px;flex-wrap:wrap">
         <button class="tab-btn active" id="cfgTabConta" onclick="setContaTab('conta')">Conta</button>
         <button class="tab-btn" id="cfgTabServicos" onclick="setContaTab('servicos')">Serviços</button>
         <button class="tab-btn" id="cfgTabPublic" onclick="setContaTab('publica')">Página pública</button>
         <button class="tab-btn" id="cfgTabNotif" onclick="setContaTab('notif')">Notificações</button>
+        <button class="tab-btn" id="cfgTabBarbearia" onclick="setContaTab('barbearia')">Barbearia</button>
       </div>
       <div id="contaContent"></div>
     </div>
@@ -571,6 +572,125 @@
     </form>
   </div>
 </div>
+
+<!-- Modal: Virar Barbearia -->
+<div class="modal-overlay" id="virarBarbeariaModal">
+  <div class="modal" style="max-width:560px">
+    <div class="modal-header">
+      <div>
+        <h2>🚀 Virar Barbearia</h2>
+        <div class="modal-header-sub">Expanda seu negócio com uma equipe</div>
+      </div>
+      <button class="modal-close" onclick="closeModal('virarBarbeariaModal')">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+
+    <form id="virarBarbeariaForm" onsubmit="confirmarVirarBarbearia(event)">
+      <div class="modal-body">
+        <!-- Benefícios -->
+        <div style="background:linear-gradient(135deg, rgba(212,168,87,0.08), rgba(212,168,87,0.02));border:1px solid rgba(212,168,87,0.2);border-radius:10px;padding:14px;margin-bottom:18px">
+          <div style="font-size:12px;font-weight:600;color:var(--gold);margin-bottom:8px;letter-spacing:1px;text-transform:uppercase">O que muda</div>
+          <ul style="list-style:none;padding:0;margin:0;font-size:12.5px;color:var(--text-soft);line-height:1.9">
+            <li>✓ Convide outros barbeiros pra sua equipe</li>
+            <li>✓ Página pública com todos os barbeiros</li>
+            <li>✓ Dashboard consolidado do negócio</li>
+            <li>✓ Comissões automáticas por barbeiro</li>
+            <li>✓ Configure quem recebe quais notificações</li>
+          </ul>
+        </div>
+
+        <div class="field" style="margin-top:0">
+          <label>Nome da barbearia *</label>
+          <input class="input" type="text" name="name" id="vbName" required placeholder="Ex: Don Junior Barber" oninput="onBarbeariaNameInput()">
+          <p class="field-hint">Nome que aparece pros clientes</p>
+        </div>
+
+        <div class="field">
+          <label>URL pública *</label>
+          <div style="display:flex;align-items:center;gap:6px">
+            <div style="background:var(--bg-card);padding:11px 12px;border:1px solid var(--line);border-radius:8px 0 0 8px;border-right:none;color:var(--text-dim);font-size:13px;font-family:'JetBrains Mono', monospace">cortify/?b=</div>
+            <input class="input" type="text" name="slug" id="vbSlug" required placeholder="don-junior" style="border-radius:0 8px 8px 0" pattern="[a-z0-9-]{3,50}" oninput="validateSlug()">
+          </div>
+          <p class="field-hint" id="vbSlugFeedback">Apenas letras minúsculas, números e traços</p>
+        </div>
+
+        <div class="field-row">
+          <div class="field">
+            <label>WhatsApp da barbearia</label>
+            <input class="input" type="tel" name="whatsapp" placeholder="11987654321">
+            <p class="field-hint">Opcional · usa o seu se vazio</p>
+          </div>
+          <div class="field">
+            <label>Telefone fixo</label>
+            <input class="input" type="tel" name="phone" placeholder="(11) 3000-0000">
+            <p class="field-hint">Opcional</p>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Descrição (opcional)</label>
+          <textarea class="textarea" name="description" rows="2" placeholder="Conte um pouco sobre a barbearia"></textarea>
+        </div>
+
+        <!-- Migração de dados -->
+        <div class="field">
+          <label>O que fazer com seus dados atuais?</label>
+          <div style="display:grid;gap:8px;margin-top:6px" id="migrationOptions">
+            <label class="migration-radio active" data-mode="ALL">
+              <input type="radio" name="migration_mode" value="ALL" checked style="display:none">
+              <div style="font-weight:600;font-size:13px">Migrar tudo (recomendado)</div>
+              <div style="font-size:11px;color:var(--text-soft);margin-top:2px" id="migrateAllInfo">Clientes, serviços, agendamentos, pacotes — vinculados à barbearia</div>
+            </label>
+            <label class="migration-radio" data-mode="CLIENTS_ONLY">
+              <input type="radio" name="migration_mode" value="CLIENTS_ONLY" style="display:none">
+              <div style="font-weight:600;font-size:13px">Só clientes + serviços</div>
+              <div style="font-size:11px;color:var(--text-soft);margin-top:2px">Mantém base de clientes, mas começa agenda do zero</div>
+            </label>
+            <label class="migration-radio" data-mode="NONE">
+              <input type="radio" name="migration_mode" value="NONE" style="display:none">
+              <div style="font-weight:600;font-size:13px">Começar do zero</div>
+              <div style="font-size:11px;color:var(--text-soft);margin-top:2px">Dados antigos ficam no histórico, barbearia inicia limpa</div>
+            </label>
+          </div>
+        </div>
+
+        <!-- Aviso -->
+        <div style="background:rgba(224,116,116,0.06);border:1px solid rgba(224,116,116,0.2);border-radius:8px;padding:12px;margin-top:14px;font-size:12px;color:var(--text-soft);line-height:1.5">
+          ⚠️ <strong style="color:var(--red)">Atenção:</strong> Esta ação migra você pro modo Barbearia. Você poderá voltar pro modo autônomo depois, mas é melhor pensar bem antes.
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-ghost" onclick="closeModal('virarBarbeariaModal')">Cancelar</button>
+        <button type="submit" class="btn btn-primary" id="vbSaveBtn">Criar Barbearia</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<style>
+  .migration-radio {
+    background: var(--bg-card);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .migration-radio:hover {
+    border-color: rgba(212,168,87,0.3);
+  }
+  .migration-radio.active {
+    border-color: var(--gold);
+    background: var(--gold-dim);
+  }
+  .migration-radio.active div:first-child {
+    color: var(--gold);
+  }
+  #vbSlugFeedback.valid { color: var(--green); }
+  #vbSlugFeedback.invalid { color: var(--red); }
+</style>
 
 <!-- Scripts -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
