@@ -259,7 +259,7 @@
           <button class="icon-btn" onclick="changeAgendaDay(-1)" title="Anterior">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
           </button>
-          <button class="btn btn-ghost btn-sm" onclick="goToToday()">Hoje</button>
+          <button class="btn btn-ghost btn-sm" id="btnGoToday" onclick="goToToday()">Voltar pra hoje</button>
           <button class="icon-btn" onclick="changeAgendaDay(1)" title="Próximo">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
           </button>
@@ -270,6 +270,9 @@
           <button class="tab-btn" id="tabSemana" onclick="setAgendaView('semana')">Semana</button>
         </div>
       </div>
+
+      <!-- Filtro por barbeiro (só aparece pra OWNER/MANAGER/RECEPT em barbearia) -->
+      <div id="agendaBarberFilter" style="display:none;margin-bottom:14px"></div>
 
       <div id="agendaList"></div>
     </div>
