@@ -209,6 +209,11 @@ async function loadBarbeariaInfo() {
   };
   state.barbeariaRole = b.role;
   state.barbeariaIsOwner = b.is_owner;
+
+  // Mostra menu "Relatórios" no sidebar pra OWNER/MANAGER
+  if (['OWNER', 'MANAGER'].includes(b.role)) {
+    document.querySelectorAll('.side-link-relatorios').forEach(el => el.style.display = '');
+  }
 }
 
 // ========== NAVEGAÇÃO ==========
@@ -252,6 +257,9 @@ function showView(view, opts = {}) {
   } else if (view === "lembretes") {
     viewId = "view-lembretes";
     renderLembretes();
+  } else if (view === "relatorios") {
+    viewId = "view-relatorios";
+    renderRelatorios();
   }
 
   const el = document.getElementById(viewId);
@@ -351,6 +359,767 @@ function getDateRange(periodo) {
   return { inicio, fim, inicioPrev, fimPrev, label };
 }
 
+// ============================================
+// DASHBOARD MULTI-TENANT
+// - renderBarbershopDashboard: OWNER/MANAGER veem tudo
+// - renderBarberDashboard: BARBER vê próprios dados
+// - renderDashboard (autônomo): fluxo antigo
+// ============================================
+
+async function renderBarbershopDashboard() {
+  const range = getDateRange(dashPeriodo);
+  const container = document.getElementById('dashContent');
+  container.innerHTML = `<div style="padding:40px;text-align:center;color:var(--text-soft)">Carregando...</div>`;
+
+  // Carrega métricas + ranking + próximos
+  const [metricsRes, rankingRes, topServicosRes, proxAgendaRes] = await Promise.all([
+    sb.rpc('get_barbershop_dashboard_metrics', {
+      p_barbershop_id: state.barbearia.id,
+      p_start_date: range.inicio.toISOString(),
+      p_end_date: range.fim.toISOString(),
+    }),
+    sb.rpc('get_barber_ranking', {
+      p_barbershop_id: state.barbearia.id,
+      p_start_date: range.inicio.toISOString(),
+      p_end_date: range.fim.toISOString(),
+    }),
+    sb.rpc('get_top_services_barbershop', {
+      p_barbershop_id: state.barbearia.id,
+      p_start_date: range.inicio.toISOString(),
+      p_end_date: range.fim.toISOString(),
+      p_limit: 5,
+    }),
+    // Próximos agendamentos só se for hoje
+    dashPeriodo === 'hoje'
+      ? sb.rpc('get_agendamentos_view', {
+          p_start: new Date().toISOString(),
+          p_end: (() => { const e = new Date(); e.setHours(23,59,59,999); return e.toISOString(); })(),
+          p_filter_user_id: null,
+        })
+      : Promise.resolve({ data: [] }),
+  ]);
+
+  const m = metricsRes.data || {};
+  const ranking = rankingRes.data || [];
+  const topServicos = topServicosRes.data || [];
+  const proximos = (proxAgendaRes.data || [])
+    .filter(a => a.status === 'AGENDADO' || a.status === 'CONFIRMADO')
+    .slice(0, 5);
+
+  // Fallback se erro
+  if (metricsRes.error) {
+    container.innerHTML = `<div style="color:var(--red);padding:20px">Erro: ${metricsRes.error.message}</div>`;
+    return;
+  }
+
+  // Render
+  container.innerHTML = `
+    <!-- Header: Faturamento Bruto + Líquido (lado a lado) -->
+    <div class="dash-finance-grid">
+      <div class="stat-card gold dashboard-clickable" onclick="navigate('relatorios')">
+        <div class="stat-label">Faturamento bruto · ${range.label}</div>
+        <div class="stat-num" style="font-size:32px">${bf.formatBRL(m.faturamento_bruto || 0)}</div>
+        <div class="stat-foot">${bf.formatBRL(m.faturamento_avulso || 0)} avulso · ${bf.formatBRL(m.faturamento_pacote || 0)} pacote</div>
+      </div>
+      <div class="stat-card dashboard-clickable" onclick="navigate('relatorios')">
+        <div class="stat-label">Lucro líquido <span style="font-size:10px;color:var(--text-dim);margin-left:6px">após comissões</span></div>
+        <div class="stat-num" style="font-size:32px;color:${(m.lucro_liquido || 0) >= 0 ? 'var(--green)' : 'var(--red)'}">${bf.formatBRL(m.lucro_liquido || 0)}</div>
+        <div class="stat-foot">- ${bf.formatBRL(m.total_comissoes || 0)} a pagar</div>
+      </div>
+    </div>
+
+    <!-- Linha de stats menores -->
+    <div class="stats-grid" style="margin:14px 0 20px">
+      <div class="stat-card">
+        <div class="stat-label">Atendimentos</div>
+        <div class="stat-num">${m.atendimentos || 0}</div>
+        <div class="stat-foot">${m.clientes_unicos || 0} cliente${(m.clientes_unicos || 0) !== 1 ? 's' : ''} único${(m.clientes_unicos || 0) !== 1 ? 's' : ''}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Ticket médio</div>
+        <div class="stat-num">${bf.formatBRL(m.ticket_medio || 0)}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Pacotes vendidos</div>
+        <div class="stat-num">${m.pacotes_vendidos || 0}</div>
+        <div class="stat-foot">${m.consumos_pacote || 0} consumo${(m.consumos_pacote || 0) !== 1 ? 's' : ''}</div>
+      </div>
+    </div>
+
+    <!-- Ranking dos barbeiros -->
+    <div class="card" style="margin-bottom:20px">
+      <div class="block-h">
+        <h3>Ranking da equipe · ${range.label}</h3>
+        <a onclick="navigate('relatorios')" style="cursor:pointer;color:var(--gold);font-size:12px">Ver tudo →</a>
+      </div>
+      ${ranking.length === 0 ? `
+        <p style="color:var(--text-dim);font-size:13px;text-align:center;padding:18px">Sem dados ainda</p>
+      ` : `
+        <div class="ranking-table">
+          <div class="ranking-header">
+            <div>#</div>
+            <div>Barbeiro</div>
+            <div style="text-align:right">Atend.</div>
+            <div style="text-align:right">Receita</div>
+            <div style="text-align:right">Comissão</div>
+          </div>
+          ${ranking.map((r, idx) => `
+            <div class="ranking-row">
+              <div class="ranking-pos">${idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : (idx + 1)}</div>
+              <div>
+                <div style="font-size:13px;font-weight:600">${escapeHtml(r.barber_name)}</div>
+                <div style="font-size:10px;color:var(--text-dim)">${roleLabel(r.role)} · ${commissionLabel(r)}</div>
+              </div>
+              <div style="text-align:right;font-family:'JetBrains Mono', monospace;font-size:13px">${r.atendimentos}</div>
+              <div style="text-align:right;font-family:'JetBrains Mono', monospace;font-size:13px;color:var(--gold);font-weight:600">${bf.formatBRL(r.faturamento)}</div>
+              <div style="text-align:right;font-family:'JetBrains Mono', monospace;font-size:13px">${r.role === 'OWNER' ? '—' : bf.formatBRL(r.comissao)}</div>
+            </div>
+          `).join('')}
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:14px;margin-top:8px;border-top:1px solid var(--line);font-size:13px">
+          <span style="color:var(--text-soft)">Total de comissões a pagar:</span>
+          <strong style="font-family:'Playfair Display';font-size:18px;color:var(--gold)">${bf.formatBRL(m.total_comissoes || 0)}</strong>
+        </div>
+      `}
+    </div>
+
+    <!-- Próximos atendimentos -->
+    ${dashPeriodo === 'hoje' && proximos.length > 0 ? `
+      <div class="card" style="margin-bottom:20px">
+        <div class="block-h">
+          <h3>Próximos atendimentos · hoje</h3>
+          <a onclick="navigate('agenda')" style="cursor:pointer;color:var(--gold);font-size:12px">Ver agenda →</a>
+        </div>
+        ${proximos.map(p => {
+          const horario = new Date(p.inicio).toTimeString().slice(0, 5);
+          return `
+            <div style="display:flex;align-items:center;gap:14px;padding:12px 0;border-bottom:1px solid var(--line-soft)">
+              <div style="font-family:'Playfair Display';font-size:20px;font-weight:700;color:var(--gold);min-width:60px">${horario}</div>
+              <div style="flex:1;min-width:0">
+                <div style="font-size:14px;font-weight:600">${escapeHtml(p.cliente_nome || '?')}</div>
+                <div style="font-size:11px;color:var(--text-soft);margin-top:2px">${escapeHtml(p.servico_nome || '?')} · 👤 ${escapeHtml(p.barber_name || '?')}</div>
+              </div>
+              <a href="${bf.whatsappLink(p.cliente_telefone, `Oi ${(p.cliente_nome || '').split(' ')[0]}, lembrando do horário às ${horario}!`)}" target="_blank" class="icon-btn" title="WhatsApp">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+              </a>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    ` : ''}
+
+    <!-- Top serviços + atalho de relatórios -->
+    <div class="dash-side-grid">
+      ${topServicos.length > 0 ? `
+        <div class="card">
+          <div class="block-h">
+            <h3>Top serviços</h3>
+          </div>
+          ${topServicos.map(s => `
+            <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line-soft)">
+              <div style="flex:1;min-width:0">
+                <div style="font-size:13px;font-weight:600">${escapeHtml(s.nome)}</div>
+                <div style="font-size:10px;color:var(--text-dim)">${s.qtd_atendimentos}x · ${bf.formatBRL(s.preco)} cada</div>
+              </div>
+              <div style="font-family:'Playfair Display';font-size:15px;font-weight:700;color:var(--gold)">${bf.formatBRL(s.faturamento)}</div>
+            </div>
+          `).join('')}
+        </div>
+      ` : ''}
+
+      <div class="card">
+        <div class="block-h">
+          <h3>Atalhos</h3>
+        </div>
+        <div style="display:grid;gap:8px">
+          <button class="btn btn-ghost" onclick="navigate('relatorios')" style="justify-content:flex-start;text-align:left">
+            📊 Relatórios completos
+          </button>
+          <button class="btn btn-ghost" onclick="navigate('agenda')" style="justify-content:flex-start;text-align:left">
+            📅 Agenda da equipe
+          </button>
+          <button class="btn btn-ghost" onclick="navigate('clientes')" style="justify-content:flex-start;text-align:left">
+            👥 Clientes
+          </button>
+          <button class="btn btn-ghost" onclick="setContaTab('barbearia');navigate('conta')" style="justify-content:flex-start;text-align:left">
+            ⚙️ Configurações da barbearia
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// Label do modelo de comissão (pra mostrar no ranking)
+function commissionLabel(member) {
+  const model = member.commission_model;
+  if (!model || model === 'NONE') return 'sem comissão';
+  if (model === 'PERCENT') return `${member.commission_percent}%`;
+  if (model === 'RENT') return 'aluguel fixo';
+  if (model === 'SALARY') return 'salário fixo';
+  if (model === 'MIXED') return `${member.commission_percent}% + fixo`;
+  return model;
+}
+
+
+async function renderBarberDashboard() {
+  const range = getDateRange(dashPeriodo);
+  const container = document.getElementById('dashContent');
+  container.innerHTML = `<div style="padding:40px;text-align:center;color:var(--text-soft)">Carregando...</div>`;
+
+  // Métricas pessoais + próximos
+  const [metricsRes, proxAgendaRes, topServicosRes, atendimentosRes] = await Promise.all([
+    sb.rpc('get_barber_personal_metrics', {
+      p_start_date: range.inicio.toISOString(),
+      p_end_date: range.fim.toISOString(),
+    }),
+    dashPeriodo === 'hoje'
+      ? sb.rpc('get_agendamentos_view', {
+          p_start: new Date().toISOString(),
+          p_end: (() => { const e = new Date(); e.setHours(23,59,59,999); return e.toISOString(); })(),
+          p_filter_user_id: state.user.id, // só os meus
+        })
+      : Promise.resolve({ data: [] }),
+    // Top serviços do PRÓPRIO barbeiro (não da barbearia)
+    sb.from('atendimentos')
+      .select('servico_id, servico:servicos(nome, preco)')
+      .eq('user_id', state.user.id)
+      .gte('data', range.inicio.toISOString())
+      .lte('data', range.fim.toISOString()),
+    sb.from('atendimentos')
+      .select('*, cliente:clientes(nome), servico:servicos(nome, preco)')
+      .eq('user_id', state.user.id)
+      .gte('data', range.inicio.toISOString())
+      .lte('data', range.fim.toISOString())
+      .order('data', { ascending: false })
+      .limit(10),
+  ]);
+
+  const m = metricsRes.data || {};
+  const proximos = (proxAgendaRes.data || [])
+    .filter(a => a.status === 'AGENDADO' || a.status === 'CONFIRMADO')
+    .slice(0, 5);
+
+  // Calcula top serviços do barbeiro
+  const servicosMap = {};
+  (topServicosRes.data || []).forEach(a => {
+    if (!a.servico_id) return;
+    if (!servicosMap[a.servico_id]) {
+      servicosMap[a.servico_id] = { nome: a.servico?.nome, preco: a.servico?.preco, qtd: 0 };
+    }
+    servicosMap[a.servico_id].qtd++;
+  });
+  const topServicos = Object.values(servicosMap).sort((a, b) => b.qtd - a.qtd).slice(0, 5);
+
+  if (metricsRes.error) {
+    container.innerHTML = `<div style="color:var(--red);padding:20px">Erro: ${metricsRes.error.message}</div>`;
+    return;
+  }
+
+  const ultimosAtend = atendimentosRes.data || [];
+
+  container.innerHTML = `
+    <!-- Header: Minha comissão -->
+    <div class="dash-finance-grid">
+      <div class="stat-card gold">
+        <div class="stat-label">Minha receita · ${range.label}</div>
+        <div class="stat-num" style="font-size:32px">${bf.formatBRL(m.faturamento || 0)}</div>
+        <div class="stat-foot">${m.atendimentos || 0} atendimento${(m.atendimentos || 0) !== 1 ? 's' : ''}</div>
+      </div>
+      <div class="stat-card" style="border-color:var(--green)">
+        <div class="stat-label">Minha comissão</div>
+        <div class="stat-num" style="font-size:32px;color:var(--green)">${bf.formatBRL(m.comissao || 0)}</div>
+        <div class="stat-foot">${commissionLabelMember(m)}</div>
+      </div>
+    </div>
+
+    <!-- Stats menores -->
+    <div class="stats-grid" style="margin:14px 0 20px">
+      <div class="stat-card">
+        <div class="stat-label">Atendimentos</div>
+        <div class="stat-num">${m.atendimentos || 0}</div>
+        <div class="stat-foot">${m.clientes_unicos || 0} cliente${(m.clientes_unicos || 0) !== 1 ? 's' : ''} único${(m.clientes_unicos || 0) !== 1 ? 's' : ''}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Ticket médio</div>
+        <div class="stat-num">${bf.formatBRL(m.ticket_medio || 0)}</div>
+      </div>
+      ${m.top_servico ? `
+        <div class="stat-card">
+          <div class="stat-label">Mais feito</div>
+          <div class="stat-num" style="font-size:18px">${escapeHtml(m.top_servico)}</div>
+          <div class="stat-foot">${m.top_servico_qtd}x no período</div>
+        </div>
+      ` : `
+        <div class="stat-card">
+          <div class="stat-label">Mais feito</div>
+          <div class="stat-num" style="font-size:14px;color:var(--text-dim)">—</div>
+          <div class="stat-foot">sem dados</div>
+        </div>
+      `}
+    </div>
+
+    <!-- Próximos atendimentos -->
+    ${dashPeriodo === 'hoje' && proximos.length > 0 ? `
+      <div class="card" style="margin-bottom:20px">
+        <div class="block-h">
+          <h3>Meus próximos atendimentos</h3>
+          <a onclick="navigate('agenda')" style="cursor:pointer;color:var(--gold);font-size:12px">Ver agenda →</a>
+        </div>
+        ${proximos.map(p => {
+          const horario = new Date(p.inicio).toTimeString().slice(0, 5);
+          return `
+            <div style="display:flex;align-items:center;gap:14px;padding:12px 0;border-bottom:1px solid var(--line-soft)">
+              <div style="font-family:'Playfair Display';font-size:20px;font-weight:700;color:var(--gold);min-width:60px">${horario}</div>
+              <div style="flex:1;min-width:0">
+                <div style="font-size:14px;font-weight:600">${escapeHtml(p.cliente_nome || '?')}</div>
+                <div style="font-size:11px;color:var(--text-soft);margin-top:2px">${escapeHtml(p.servico_nome || '?')}</div>
+              </div>
+              <a href="${bf.whatsappLink(p.cliente_telefone, `Oi ${(p.cliente_nome || '').split(' ')[0]}, lembrando do horário às ${horario}!`)}" target="_blank" class="icon-btn" title="WhatsApp">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+              </a>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    ` : ''}
+
+    <!-- Meus top serviços + últimos atendimentos -->
+    <div class="dash-side-grid">
+      ${topServicos.length > 0 ? `
+        <div class="card">
+          <div class="block-h"><h3>Meus serviços mais feitos</h3></div>
+          ${topServicos.map(s => `
+            <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line-soft)">
+              <div style="flex:1;min-width:0">
+                <div style="font-size:13px;font-weight:600">${escapeHtml(s.nome || '?')}</div>
+                <div style="font-size:10px;color:var(--text-dim)">${bf.formatBRL(s.preco || 0)} cada</div>
+              </div>
+              <div style="font-family:'Playfair Display';font-size:18px;font-weight:700;color:var(--gold)">${s.qtd}x</div>
+            </div>
+          `).join('')}
+        </div>
+      ` : ''}
+
+      ${ultimosAtend.length > 0 ? `
+        <div class="card">
+          <div class="block-h"><h3>Últimos atendimentos</h3></div>
+          ${ultimosAtend.slice(0, 5).map(a => {
+            const data = new Date(a.data).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" });
+            return `
+              <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line-soft)">
+                <div style="flex:1;min-width:0">
+                  <div style="font-size:13px;font-weight:600">${escapeHtml(a.cliente?.nome || '?')}</div>
+                  <div style="font-size:10px;color:var(--text-dim)">${escapeHtml(a.servico?.nome || '?')} · ${data}</div>
+                </div>
+                <div style="font-family:'JetBrains Mono', monospace;font-size:12px;color:var(--gold);font-weight:600">${bf.formatBRL(a.pago_via_pacote ? (a.servico?.preco || 0) : (a.valor_avulso || 0))}</div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+// Label do modelo de comissão (formato pra header pessoal)
+function commissionLabelMember(m) {
+  if (!m || !m.commission_model || m.commission_model === 'NONE') return 'sem comissão configurada';
+  if (m.commission_model === 'PERCENT') return `${m.commission_percent}% sobre receita`;
+  if (m.commission_model === 'RENT') return `aluguel R$ ${Number(m.rent_amount || 0).toFixed(2)}/mês`;
+  if (m.commission_model === 'SALARY') return `salário R$ ${Number(m.salary_amount || 0).toFixed(2)}/mês`;
+  if (m.commission_model === 'MIXED') return `${m.commission_percent}% + R$ ${Number(m.salary_amount || 0).toFixed(2)}/mês`;
+  return '';
+}
+
+
+// ============================================
+// RELATÓRIOS (Visão Geral / Equipe / Financeiro)
+// ============================================
+
+let relatorioPeriodo = 'mes';
+let relatorioTab = 'geral';
+
+async function renderRelatorios() {
+  if (!state.barbearia || !['OWNER', 'MANAGER'].includes(state.barbeariaRole)) {
+    document.getElementById('relatoriosContent').innerHTML = `
+      <div style="padding:40px;text-align:center;color:var(--text-soft)">
+        Apenas Dono e Gerente podem acessar os relatórios.
+      </div>
+    `;
+    return;
+  }
+
+  document.getElementById('relatoriosSub').textContent = `${state.barbearia.name}`;
+
+  if (relatorioTab === 'geral') return renderRelatorioGeral();
+  if (relatorioTab === 'equipe') return renderRelatorioEquipe();
+  if (relatorioTab === 'financeiro') return renderRelatorioFinanceiro();
+}
+
+function setRelatorioPeriodo(p) {
+  relatorioPeriodo = p;
+  document.querySelectorAll('#relatoriosPeriodoFilter .tab-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.periodo === p);
+  });
+  renderRelatorios();
+}
+
+function setRelatorioTab(t) {
+  relatorioTab = t;
+  document.getElementById('relTabGeral').classList.toggle('active', t === 'geral');
+  document.getElementById('relTabEquipe').classList.toggle('active', t === 'equipe');
+  document.getElementById('relTabFinanceiro').classList.toggle('active', t === 'financeiro');
+  renderRelatorios();
+}
+
+function getRelatorioRange() {
+  const hoje = new Date();
+  hoje.setHours(0,0,0,0);
+  let inicio, fim, label;
+
+  if (relatorioPeriodo === 'hoje') {
+    inicio = new Date(hoje);
+    fim = new Date(hoje);
+    fim.setHours(23,59,59,999);
+    label = 'hoje';
+  } else if (relatorioPeriodo === '7d') {
+    inicio = new Date(hoje);
+    inicio.setDate(inicio.getDate() - 6);
+    fim = new Date(hoje);
+    fim.setHours(23,59,59,999);
+    label = 'últimos 7 dias';
+  } else if (relatorioPeriodo === 'mes-passado') {
+    const m = new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1);
+    inicio = m;
+    fim = new Date(hoje.getFullYear(), hoje.getMonth(), 0);
+    fim.setHours(23,59,59,999);
+    label = 'mês passado';
+  } else {
+    // mes (default)
+    inicio = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
+    fim = new Date(hoje.getFullYear(), hoje.getMonth() + 1, 0);
+    fim.setHours(23,59,59,999);
+    label = 'este mês';
+  }
+  return { inicio, fim, label };
+}
+
+// VISÃO GERAL
+async function renderRelatorioGeral() {
+  const container = document.getElementById('relatoriosContent');
+  container.innerHTML = `<div style="padding:40px;text-align:center;color:var(--text-soft)">Carregando...</div>`;
+
+  const range = getRelatorioRange();
+
+  const [metricsRes, revenueDayRes, topServRes] = await Promise.all([
+    sb.rpc('get_barbershop_dashboard_metrics', {
+      p_barbershop_id: state.barbearia.id,
+      p_start_date: range.inicio.toISOString(),
+      p_end_date: range.fim.toISOString(),
+    }),
+    sb.rpc('get_revenue_by_day', {
+      p_barbershop_id: state.barbearia.id,
+      p_start_date: range.inicio.toISOString(),
+      p_end_date: range.fim.toISOString(),
+    }),
+    sb.rpc('get_top_services_barbershop', {
+      p_barbershop_id: state.barbearia.id,
+      p_start_date: range.inicio.toISOString(),
+      p_end_date: range.fim.toISOString(),
+      p_limit: 10,
+    }),
+  ]);
+
+  const m = metricsRes.data || {};
+  const revenueByDay = revenueDayRes.data || [];
+  const topServicos = topServRes.data || [];
+
+  // Calcula chart bars (mínimo 7, máximo 30 colunas)
+  const maxBar = Math.max(...revenueByDay.map(d => Number(d.faturamento)), 1);
+  const chartBars = revenueByDay.slice(-30).map(d => {
+    const date = new Date(d.dia);
+    return {
+      label: `${date.getDate()}/${date.getMonth() + 1}`,
+      valor: Number(d.faturamento),
+      altura: (Number(d.faturamento) / maxBar) * 100,
+      atend: d.atendimentos,
+    };
+  });
+
+  container.innerHTML = `
+    <!-- Stats principais -->
+    <div class="stats-grid" style="margin-bottom:20px">
+      <div class="stat-card gold">
+        <div class="stat-label">Faturamento bruto</div>
+        <div class="stat-num">${bf.formatBRL(m.faturamento_bruto || 0)}</div>
+        <div class="stat-foot">${bf.formatBRL(m.faturamento_avulso || 0)} avulso · ${bf.formatBRL(m.faturamento_pacote || 0)} pacote</div>
+      </div>
+      <div class="stat-card" style="border-color:var(--green)">
+        <div class="stat-label">Lucro líquido</div>
+        <div class="stat-num" style="color:${(m.lucro_liquido || 0) >= 0 ? 'var(--green)' : 'var(--red)'}">${bf.formatBRL(m.lucro_liquido || 0)}</div>
+        <div class="stat-foot">após - ${bf.formatBRL(m.total_comissoes || 0)} comissões</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Atendimentos</div>
+        <div class="stat-num">${m.atendimentos || 0}</div>
+        <div class="stat-foot">${m.clientes_unicos || 0} clientes</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Ticket médio</div>
+        <div class="stat-num">${bf.formatBRL(m.ticket_medio || 0)}</div>
+      </div>
+    </div>
+
+    <!-- Receita por dia (chart) -->
+    ${chartBars.length > 0 ? `
+      <div class="card" style="margin-bottom:20px">
+        <div class="block-h" style="margin-bottom:12px">
+          <h3>Receita por dia · ${range.label}</h3>
+        </div>
+        <div class="chart-bars" style="min-height:120px">
+          ${chartBars.map(b => `
+            <div class="bar-col" title="${b.label}: ${bf.formatBRL(b.valor)} (${b.atend} atend.)">
+              <div class="bar" style="height:${b.altura}%"></div>
+              <span class="bar-label">${b.label}</span>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    ` : `
+      <div class="card" style="margin-bottom:20px;padding:40px;text-align:center;color:var(--text-dim)">
+        Sem dados de receita no período.
+      </div>
+    `}
+
+    <!-- Top serviços -->
+    ${topServicos.length > 0 ? `
+      <div class="card">
+        <div class="block-h"><h3>Top serviços · ${range.label}</h3></div>
+        ${topServicos.map((s, idx) => `
+          <div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--line-soft)">
+            <div style="font-family:'Playfair Display';font-size:16px;font-weight:700;color:var(--gold);min-width:30px;text-align:center">${idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : (idx + 1)}</div>
+            <div style="flex:1;min-width:0">
+              <div style="font-size:13px;font-weight:600">${escapeHtml(s.nome)}</div>
+              <div style="font-size:10px;color:var(--text-dim)">${s.qtd_atendimentos}x · ${bf.formatBRL(s.preco)} cada</div>
+            </div>
+            <div style="font-family:'Playfair Display';font-size:18px;font-weight:700;color:var(--gold)">${bf.formatBRL(s.faturamento)}</div>
+          </div>
+        `).join('')}
+      </div>
+    ` : ''}
+  `;
+}
+
+// EQUIPE
+async function renderRelatorioEquipe() {
+  const container = document.getElementById('relatoriosContent');
+  container.innerHTML = `<div style="padding:40px;text-align:center;color:var(--text-soft)">Carregando...</div>`;
+
+  const range = getRelatorioRange();
+
+  const [rankingRes, revBarberRes] = await Promise.all([
+    sb.rpc('get_barber_ranking', {
+      p_barbershop_id: state.barbearia.id,
+      p_start_date: range.inicio.toISOString(),
+      p_end_date: range.fim.toISOString(),
+    }),
+    sb.rpc('get_revenue_by_barber', {
+      p_barbershop_id: state.barbearia.id,
+      p_start_date: range.inicio.toISOString(),
+      p_end_date: range.fim.toISOString(),
+    }),
+  ]);
+
+  const ranking = rankingRes.data || [];
+  const revByBarber = revBarberRes.data || [];
+
+  const maxRev = Math.max(...revByBarber.map(b => Number(b.faturamento)), 1);
+
+  container.innerHTML = `
+    <!-- Ranking completo -->
+    <div class="card" style="margin-bottom:20px">
+      <div class="block-h"><h3>Ranking completo · ${range.label}</h3></div>
+      ${ranking.length === 0 ? `
+        <p style="color:var(--text-dim);text-align:center;padding:30px">Sem dados no período</p>
+      ` : `
+        <div class="ranking-table">
+          <div class="ranking-header">
+            <div>#</div>
+            <div>Barbeiro</div>
+            <div style="text-align:right">Atend.</div>
+            <div style="text-align:right">Receita</div>
+            <div style="text-align:right">Comissão</div>
+          </div>
+          ${ranking.map((r, idx) => `
+            <div class="ranking-row">
+              <div class="ranking-pos">${idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : (idx + 1)}</div>
+              <div>
+                <div style="font-size:13px;font-weight:600">${escapeHtml(r.barber_name)}</div>
+                <div style="font-size:10px;color:var(--text-dim)">${roleLabel(r.role)} · ${commissionLabel(r)}</div>
+              </div>
+              <div style="text-align:right;font-family:'JetBrains Mono', monospace;font-size:13px">${r.atendimentos}</div>
+              <div style="text-align:right;font-family:'JetBrains Mono', monospace;font-size:13px;color:var(--gold);font-weight:600">${bf.formatBRL(r.faturamento)}</div>
+              <div style="text-align:right;font-family:'JetBrains Mono', monospace;font-size:13px">${r.role === 'OWNER' ? '—' : bf.formatBRL(r.comissao)}</div>
+            </div>
+          `).join('')}
+        </div>
+      `}
+    </div>
+
+    <!-- Comparativo de receita -->
+    ${revByBarber.length > 0 ? `
+      <div class="card">
+        <div class="block-h"><h3>Receita por barbeiro</h3></div>
+        ${revByBarber.map(b => {
+          const pct = (Number(b.faturamento) / maxRev) * 100;
+          return `
+            <div style="margin-bottom:14px">
+              <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
+                <span style="font-weight:600">${escapeHtml(b.barber_name)}</span>
+                <span style="color:var(--gold);font-family:'JetBrains Mono', monospace">${bf.formatBRL(b.faturamento)} · ${b.atendimentos} atend.</span>
+              </div>
+              <div style="height:8px;background:var(--bg);border-radius:4px;overflow:hidden">
+                <div style="height:100%;background:linear-gradient(90deg, var(--gold), var(--gold-soft));width:${pct}%;transition:width 0.4s"></div>
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    ` : ''}
+  `;
+}
+
+// FINANCEIRO
+async function renderRelatorioFinanceiro() {
+  const container = document.getElementById('relatoriosContent');
+  container.innerHTML = `<div style="padding:40px;text-align:center;color:var(--text-soft)">Carregando...</div>`;
+
+  const range = getRelatorioRange();
+
+  const [metricsRes, rankingRes] = await Promise.all([
+    sb.rpc('get_barbershop_dashboard_metrics', {
+      p_barbershop_id: state.barbearia.id,
+      p_start_date: range.inicio.toISOString(),
+      p_end_date: range.fim.toISOString(),
+    }),
+    sb.rpc('get_barber_ranking', {
+      p_barbershop_id: state.barbearia.id,
+      p_start_date: range.inicio.toISOString(),
+      p_end_date: range.fim.toISOString(),
+    }),
+  ]);
+
+  const m = metricsRes.data || {};
+  const ranking = rankingRes.data || [];
+
+  // Salários fixos (do mês inteiro)
+  const salariosFixos = ranking.filter(r => 
+    r.commission_model === 'SALARY' || r.commission_model === 'MIXED'
+  );
+
+  // Total folha = comissões + salários
+  const totalFolha = m.total_comissoes || 0;
+
+  container.innerHTML = `
+    <!-- Resumo financeiro -->
+    <div class="stats-grid" style="margin-bottom:20px">
+      <div class="stat-card gold">
+        <div class="stat-label">Faturamento bruto</div>
+        <div class="stat-num">${bf.formatBRL(m.faturamento_bruto || 0)}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Total a pagar (folha)</div>
+        <div class="stat-num" style="color:var(--red)">- ${bf.formatBRL(totalFolha)}</div>
+        <div class="stat-foot">${ranking.filter(r => r.role !== 'OWNER').length} barbeiro${ranking.filter(r => r.role !== 'OWNER').length !== 1 ? 's' : ''}</div>
+      </div>
+      <div class="stat-card" style="border-color:var(--green)">
+        <div class="stat-label">Lucro líquido</div>
+        <div class="stat-num" style="color:${(m.lucro_liquido || 0) >= 0 ? 'var(--green)' : 'var(--red)'}">${bf.formatBRL(m.lucro_liquido || 0)}</div>
+      </div>
+    </div>
+
+    <!-- Folha de pagamento detalhada -->
+    <div class="card" style="margin-bottom:20px">
+      <div class="block-h">
+        <h3>Folha de pagamento · ${range.label}</h3>
+        <button class="btn btn-ghost btn-sm" onclick="exportarFolha()">📋 Copiar</button>
+      </div>
+      ${ranking.filter(r => r.role !== 'OWNER').length === 0 ? `
+        <p style="color:var(--text-dim);text-align:center;padding:30px">Nenhum barbeiro com comissão configurada</p>
+      ` : `
+        <div class="payroll-table">
+          ${ranking.filter(r => r.role !== 'OWNER').map(r => `
+            <div class="payroll-row">
+              <div class="payroll-name">
+                <div style="font-size:14px;font-weight:600">${escapeHtml(r.barber_name)}</div>
+                <div style="font-size:11px;color:var(--text-dim)">${roleLabel(r.role)} · ${commissionLabel(r)}</div>
+              </div>
+              <div class="payroll-details">
+                ${r.commission_model === 'PERCENT' || r.commission_model === 'MIXED' ? `
+                  <div style="font-size:11px;color:var(--text-soft)">${bf.formatBRL(r.faturamento)} × ${r.commission_percent}% = <strong style="color:var(--gold)">${bf.formatBRL(r.comissao)}</strong></div>
+                ` : ''}
+                ${r.commission_model === 'SALARY' || r.commission_model === 'MIXED' ? `
+                  <div style="font-size:11px;color:var(--text-soft)">Salário fixo: <strong style="color:var(--gold)">${bf.formatBRL(0)}</strong> <em>(será adicionado)</em></div>
+                ` : ''}
+                ${r.commission_model === 'RENT' ? `
+                  <div style="font-size:11px;color:var(--text-soft)">Aluguel: <strong style="color:var(--green)">A RECEBER</strong></div>
+                ` : ''}
+              </div>
+              <div class="payroll-value">${r.commission_model === 'RENT' ? '—' : bf.formatBRL(r.comissao)}</div>
+            </div>
+          `).join('')}
+          <div class="payroll-total">
+            <div>Total a pagar</div>
+            <div style="color:var(--gold)">${bf.formatBRL(totalFolha)}</div>
+          </div>
+        </div>
+      `}
+    </div>
+
+    <div style="background:rgba(212,168,87,0.04);border:1px solid rgba(212,168,87,0.15);border-radius:8px;padding:14px;font-size:12px;color:var(--text-soft);line-height:1.6">
+      💡 <strong style="color:var(--gold)">Próximas funcionalidades:</strong> Exportação em PDF, registro de pagamentos efetuados, histórico de pagamentos por mês, e separação de quem recebe via PIX/dinheiro.
+    </div>
+  `;
+}
+
+// Exportar folha (copia texto pra área de transferência)
+async function exportarFolha() {
+  const range = getRelatorioRange();
+  const { data: ranking } = await sb.rpc('get_barber_ranking', {
+    p_barbershop_id: state.barbearia.id,
+    p_start_date: range.inicio.toISOString(),
+    p_end_date: range.fim.toISOString(),
+  });
+
+  const linhas = [
+    `📋 *Folha de pagamento · ${state.barbearia.name}*`,
+    `Período: ${range.label}`,
+    '',
+  ];
+  
+  let total = 0;
+  (ranking || []).filter(r => r.role !== 'OWNER').forEach(r => {
+    if (r.commission_model === 'RENT') {
+      linhas.push(`• ${r.barber_name}: aluguel a receber`);
+    } else {
+      linhas.push(`• ${r.barber_name}: ${bf.formatBRL(r.comissao)} (${r.atendimentos} atend., ${commissionLabel(r)})`);
+      total += Number(r.comissao);
+    }
+  });
+  linhas.push('');
+  linhas.push(`💰 *Total: ${bf.formatBRL(total)}*`);
+
+  const texto = linhas.join('\n');
+  try {
+    await navigator.clipboard.writeText(texto);
+    bf.toast('✓ Folha copiada pra área de transferência!', 'success');
+  } catch (e) {
+    prompt('Copie a folha:', texto);
+  }
+}
+
+
 async function renderDashboard() {
   // Saudação
   const hour = new Date().getHours();
@@ -360,6 +1129,16 @@ async function renderDashboard() {
   document.getElementById("todayLabel").textContent = new Date().toLocaleDateString("pt-BR", {
     weekday: "long", day: "numeric", month: "long",
   });
+
+  // ============================================
+  // DECISÃO DE FLUXO:
+  // ============================================
+  if (state.barbearia && ['OWNER', 'MANAGER'].includes(state.barbeariaRole)) {
+    return renderBarbershopDashboard();
+  }
+  if (state.barbearia && state.barbeariaRole === 'BARBER') {
+    return renderBarberDashboard();
+  }
 
   const range = getDateRange(dashPeriodo);
   const container = document.getElementById('dashContent');
@@ -4563,3 +5342,11 @@ window.salvarEdicaoMembro = salvarEdicaoMembro;
 window.renderAgendaBarberFilter = renderAgendaBarberFilter;
 window.setAgendaFilter = setAgendaFilter;
 window.openAgendamentoModalForBarber = openAgendamentoModalForBarber;
+// Dashboard multi-tenant
+window.renderBarbershopDashboard = renderBarbershopDashboard;
+window.renderBarberDashboard = renderBarberDashboard;
+// Relatórios
+window.renderRelatorios = renderRelatorios;
+window.setRelatorioPeriodo = setRelatorioPeriodo;
+window.setRelatorioTab = setRelatorioTab;
+window.exportarFolha = exportarFolha;
