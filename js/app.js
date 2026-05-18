@@ -3462,57 +3462,8 @@ async function renderAgendaDia() {
     }
   }
 
-  // Pra cada slot, classifica em 3 tipos:
-  // - INICIO: agendamento começa neste slot (mostra card completo)
-  // - CONTINUACAO: agendamento começou antes mas ainda ocupa este slot
-  // - VAGO: nada acontecendo
-  const slotsHTML = slots.map(slot => {
-    // Procura se algum agendamento começa exatamente neste slot
-    const agInicio = (agendamentos || []).find(a => {
-      const aIni = new Date(a.inicio);
-      return aIni >= slot.inicio && aIni < slot.fim;
-    });
-
-    // Procura se algum agendamento está em andamento neste slot (começou antes, ainda não terminou)
-    const agContinua = !agInicio && (agendamentos || []).find(a => {
-      const aIni = new Date(a.inicio);
-      const aFim = new Date(a.fim);
-      return aIni < slot.inicio && aFim > slot.inicio;
-    });
-
-    const horarioStr = slot.inicio.toTimeString().slice(0, 5);
-
-    // CASO 1: Slot vago
-    if (!agInicio && !agContinua) {
-      return `
-        <div class="slot-empty" onclick="openAgendamentoModalAtTime('${horarioStr}')">
-          <div class="slot-time">${horarioStr}</div>
-          <div class="slot-content">
-            <span style="color:var(--text-dim);font-size:12px">+ Adicionar agendamento</span>
-          </div>
-        </div>
-      `;
-    }
-
-    // CASO 2: Continuação (agendamento começou antes)
-    if (agContinua) {
-      const isFinalizadoC = agContinua.status === "FINALIZADO";
-      const isCanceladoC = agContinua.status === "CANCELADO" || agContinua.status === "FALTOU";
-      const opacityCls = isFinalizadoC ? 'opacity:0.55' : (isCanceladoC ? 'opacity:0.4' : '');
-      return `
-        <div class="slot-continuation" style="${opacityCls}">
-          <div class="slot-time" style="color:var(--text-dim)">${horarioStr}</div>
-          <div class="slot-content">
-            <div class="appt-continuation ${isFinalizadoC ? 'done' : ''} ${isCanceladoC ? 'cancelled' : ''}">
-              <span style="font-size:11px;color:var(--text-soft);font-style:italic">↳ ${escapeHtml(agContinua.cliente?.nome || "?")} (em andamento)</span>
-            </div>
-          </div>
-        </div>
-      `;
-    }
-
-    // CASO 3: Slot ocupado (agendamento inicia aqui)
-    const ag = agInicio;
+  // Função pra renderizar UM card de agendamento (extraída pra reuso)
+  function renderAgCard(ag, horarioStr) {
     const aFim = new Date(ag.fim);
     const aFimStr = aFim.toTimeString().slice(0, 5);
     const duracaoMin = Math.round((aFim - new Date(ag.inicio)) / 60000);
@@ -3524,45 +3475,133 @@ async function renderAgendaDia() {
       p.itens.some(i => i.servico_id === ag.servico_id && i.quantidade_usada < i.quantidade_total)
     );
     const temPacoteAtivo = pacotesCliente.length > 0;
-
     const opacityCls = isFinalizado ? 'opacity:0.55' : (isCancelado ? 'opacity:0.4' : '');
 
     return `
-      <div class="slot-filled" style="${opacityCls}">
-        <div class="slot-time" style="color:${isFinalizado ? 'var(--green)' : 'var(--gold)'}">${horarioStr}</div>
-        <div class="slot-content">
-          <div class="appt-card ${isFinalizado ? 'done' : ''} ${isCancelado ? 'cancelled' : ''}">
-            <div style="flex:1;min-width:0">
-              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-                <div style="font-size:14px;font-weight:600">${escapeHtml(ag.cliente?.nome || "?")}</div>
-                ${isFinalizado ? '<span class="pill pill-green" style="font-size:10px">Finalizado</span>' : ''}
-                ${isCancelado ? `<span class="pill pill-red" style="font-size:10px">${ag.status}</span>` : ''}
-                ${pacoteCobre && !isFinalizado && !isCancelado ? `
-                  <span class="pill pill-gold" style="font-size:10px">
-                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
-                    Pacote
-                  </span>
-                ` : ''}
-                ${state.barbearia && ag.barber_name && ag.user_id !== state.user.id ? `
-                  <span class="pill pill-soft" style="font-size:10px">
-                    👤 ${escapeHtml(ag.barber_name)}
-                  </span>
-                ` : ''}
-              </div>
-              <div style="font-size:11px;color:var(--text-soft);margin-top:2px">
-                ${escapeHtml(ag.servico?.nome || "?")} · ${duracaoMin}min (até ${aFimStr}) · ${bf.formatBRL(ag.servico?.preco || 0)}
-              </div>
-            </div>
-            ${!isFinalizado && !isCancelado ? `
-              <div style="display:flex;gap:4px">
-                <a href="${bf.whatsappLink(ag.cliente?.telefone, `Oi ${ag.cliente?.nome?.split(' ')[0] || ''}, lembrando do seu horário às ${horarioStr}!`)}" target="_blank" class="icon-btn" style="width:30px;height:30px" title="WhatsApp" onclick="event.stopPropagation()">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
-                </a>
-                <button class="btn btn-ghost btn-sm" style="padding:6px 10px;font-size:11px" onclick='event.stopPropagation();openAgendamentoModal(${escapeJsonForAttr(ag)})'>Editar</button>
-                <button class="btn btn-success btn-sm" style="padding:6px 10px;font-size:11px" onclick='event.stopPropagation();openFinalizarModal(${escapeJsonForAttr({ ...ag, _temPacote: temPacoteAtivo })})'>✓ Finalizar</button>
-              </div>
+      <div class="appt-card ${isFinalizado ? 'done' : ''} ${isCancelado ? 'cancelled' : ''}" style="${opacityCls}">
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <div style="font-size:14px;font-weight:600">${escapeHtml(ag.cliente?.nome || "?")}</div>
+            ${isFinalizado ? '<span class="pill pill-green" style="font-size:10px">Finalizado</span>' : ''}
+            ${isCancelado ? `<span class="pill pill-red" style="font-size:10px">${ag.status}</span>` : ''}
+            ${pacoteCobre && !isFinalizado && !isCancelado ? `
+              <span class="pill pill-gold" style="font-size:10px">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+                Pacote
+              </span>
+            ` : ''}
+            ${state.barbearia && ag.barber_name && ag.user_id !== state.user.id ? `
+              <span class="pill pill-soft" style="font-size:10px">
+                👤 ${escapeHtml(ag.barber_name)}
+              </span>
             ` : ''}
           </div>
+          <div style="font-size:11px;color:var(--text-soft);margin-top:2px">
+            ${escapeHtml(ag.servico?.nome || "?")} · ${duracaoMin}min (até ${aFimStr}) · ${bf.formatBRL(ag.servico?.preco || 0)}
+          </div>
+        </div>
+        ${!isFinalizado && !isCancelado ? `
+          <div style="display:flex;gap:4px">
+            <a href="${bf.whatsappLink(ag.cliente?.telefone, `Oi ${ag.cliente?.nome?.split(' ')[0] || ''}, lembrando do seu horário às ${horarioStr}!`)}" target="_blank" class="icon-btn" style="width:30px;height:30px" title="WhatsApp" onclick="event.stopPropagation()">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+            </a>
+            <button class="btn btn-ghost btn-sm" style="padding:6px 10px;font-size:11px" onclick='event.stopPropagation();openAgendamentoModal(${escapeJsonForAttr(ag)})'>Editar</button>
+            <button class="btn btn-success btn-sm" style="padding:6px 10px;font-size:11px" onclick='event.stopPropagation();openFinalizarModal(${escapeJsonForAttr({ ...ag, _temPacote: temPacoteAtivo })})'>✓ Finalizar</button>
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }
+
+  // Pra cada slot, mostra TODOS os agendamentos que começam ali
+  const slotsHTML = slots.map(slot => {
+    const horarioStr = slot.inicio.toTimeString().slice(0, 5);
+
+    // Pega TODOS os agendamentos que iniciam neste slot (pode ser mais de um!)
+    const agsInicio = (agendamentos || []).filter(a => {
+      const aIni = new Date(a.inicio);
+      return aIni >= slot.inicio && aIni < slot.fim;
+    });
+
+    // Continuações: agendamentos que começaram antes e ainda ocupam o slot
+    // (excluindo os que iniciam neste mesmo slot)
+    const agsContinua = (agendamentos || []).filter(a => {
+      const aIni = new Date(a.inicio);
+      const aFim = new Date(a.fim);
+      const ehInicio = aIni >= slot.inicio && aIni < slot.fim;
+      return !ehInicio && aIni < slot.inicio && aFim > slot.inicio;
+    });
+
+    // CASO 1: Slot completamente vago
+    if (agsInicio.length === 0 && agsContinua.length === 0) {
+      return `
+        <div class="slot-empty" onclick="openAgendamentoModalAtTime('${horarioStr}')">
+          <div class="slot-time">${horarioStr}</div>
+          <div class="slot-content">
+            <span style="color:var(--text-dim);font-size:12px">+ Adicionar agendamento</span>
+          </div>
+        </div>
+      `;
+    }
+
+    // CASO 2: Só continuações (nenhum começa aqui)
+    if (agsInicio.length === 0) {
+      const continuacoesHTML = agsContinua.map(ag => {
+        const isFinalizadoC = ag.status === "FINALIZADO";
+        const isCanceladoC = ag.status === "CANCELADO" || ag.status === "FALTOU";
+        const opacityCls = isFinalizadoC ? 'opacity:0.55' : (isCanceladoC ? 'opacity:0.4' : '');
+        const barberTag = state.barbearia && ag.barber_name && ag.user_id !== state.user.id
+          ? ` · 👤 ${escapeHtml(ag.barber_name)}`
+          : '';
+        return `
+          <div class="appt-continuation ${isFinalizadoC ? 'done' : ''} ${isCanceladoC ? 'cancelled' : ''}" style="${opacityCls}">
+            <span style="font-size:11px;color:var(--text-soft);font-style:italic">↳ ${escapeHtml(ag.cliente?.nome || "?")}${barberTag} (em andamento)</span>
+          </div>
+        `;
+      }).join("");
+      return `
+        <div class="slot-continuation">
+          <div class="slot-time" style="color:var(--text-dim)">${horarioStr}</div>
+          <div class="slot-content" style="display:flex;flex-direction:column;gap:6px">${continuacoesHTML}</div>
+        </div>
+      `;
+    }
+
+    // CASO 3: Tem pelo menos 1 agendamento iniciando neste slot
+    // (pode ter múltiplos + algumas continuações também)
+    const cardsHTML = agsInicio.map(ag => renderAgCard(ag, horarioStr)).join("");
+
+    // Adiciona continuações também (se houver)
+    const continuacoesHTML = agsContinua.map(ag => {
+      const isFinalizadoC = ag.status === "FINALIZADO";
+      const isCanceladoC = ag.status === "CANCELADO" || ag.status === "FALTOU";
+      const opacityCls = isFinalizadoC ? 'opacity:0.55' : (isCanceladoC ? 'opacity:0.4' : '');
+      const barberTag = state.barbearia && ag.barber_name && ag.user_id !== state.user.id
+        ? ` · 👤 ${escapeHtml(ag.barber_name)}`
+        : '';
+      return `
+        <div class="appt-continuation ${isFinalizadoC ? 'done' : ''} ${isCanceladoC ? 'cancelled' : ''}" style="${opacityCls}">
+          <span style="font-size:11px;color:var(--text-soft);font-style:italic">↳ ${escapeHtml(ag.cliente?.nome || "?")}${barberTag} (em andamento)</span>
+        </div>
+      `;
+    }).join("");
+
+    // Badge "+N" quando tem múltiplos agendamentos no mesmo horário
+    const multiBadge = agsInicio.length > 1
+      ? `<div style="margin-bottom:6px;padding:4px 8px;background:rgba(212,168,87,0.1);border:1px solid rgba(212,168,87,0.25);border-radius:6px;font-size:10px;color:var(--gold);font-weight:600;display:inline-block">⚡ ${agsInicio.length} agendamentos neste horário</div>`
+      : '';
+
+    // Cor da hora: usa do PRIMEIRO agendamento (verde se finalizado, ouro se ativo)
+    const primeiroFinalizado = agsInicio[0].status === "FINALIZADO";
+    const corHora = primeiroFinalizado ? 'var(--green)' : 'var(--gold)';
+
+    return `
+      <div class="slot-filled-multi">
+        <div class="slot-time" style="color:${corHora}">${horarioStr}</div>
+        <div class="slot-content" style="display:flex;flex-direction:column;gap:8px">
+          ${multiBadge}
+          ${cardsHTML}
+          ${continuacoesHTML}
         </div>
       </div>
     `;
