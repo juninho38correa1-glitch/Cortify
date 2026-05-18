@@ -110,6 +110,58 @@
     font-weight: 600;
   }
 
+  /* MEMBROS (modo barbearia) */
+  .members-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 10px;
+  }
+  .member-card {
+    background: var(--bg-card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 14px 10px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-align: center;
+    color: var(--text);
+    font-family: inherit;
+  }
+  .member-card:hover { border-color: rgba(212,168,87,0.4); }
+  .member-card.selected {
+    border-color: var(--gold);
+    background: rgba(212,168,87,0.08);
+    box-shadow: 0 0 0 1px var(--gold);
+  }
+  .member-avatar {
+    width: 50px; height: 50px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--gold), var(--gold-soft));
+    display: grid; place-items: center;
+    margin: 0 auto 8px;
+    font-family: 'Playfair Display';
+    font-weight: 700;
+    font-size: 18px;
+    color: #0a0a0a;
+  }
+  .member-photo {
+    width: 50px; height: 50px;
+    border-radius: 50%;
+    object-fit: cover;
+    margin: 0 auto 8px;
+    display: block;
+  }
+  .member-name {
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 2px;
+  }
+  .member-bio {
+    font-size: 10px;
+    color: var(--text-dim);
+    font-style: italic;
+  }
+
   /* SERVIÇOS */
   .servico-row {
     display: flex;
@@ -123,24 +175,19 @@
     transition: all 0.2s;
     background: var(--bg-card);
   }
-  .servico-row:hover {
-    border-color: rgba(212,168,87,0.4);
-  }
+  .servico-row:hover { border-color: rgba(212,168,87,0.4); }
   .servico-row.selected {
     border-color: var(--gold);
     background: rgba(212,168,87,0.06);
   }
   .servico-radio {
-    width: 18px;
-    height: 18px;
+    width: 18px; height: 18px;
     border-radius: 50%;
     border: 2px solid var(--line);
     flex-shrink: 0;
     position: relative;
   }
-  .servico-row.selected .servico-radio {
-    border-color: var(--gold);
-  }
+  .servico-row.selected .servico-radio { border-color: var(--gold); }
   .servico-row.selected .servico-radio::after {
     content: '';
     position: absolute;
@@ -148,18 +195,9 @@
     border-radius: 50%;
     background: var(--gold);
   }
-  .servico-info {
-    flex: 1;
-  }
-  .servico-nome {
-    font-size: 14px;
-    font-weight: 600;
-  }
-  .servico-meta {
-    font-size: 11px;
-    color: var(--text-dim);
-    margin-top: 2px;
-  }
+  .servico-info { flex: 1; }
+  .servico-nome { font-size: 14px; font-weight: 600; }
+  .servico-meta { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
   .servico-preco {
     font-family: 'Playfair Display';
     font-size: 18px;
@@ -194,10 +232,7 @@
     border-color: var(--gold);
     background: rgba(212,168,87,0.08);
   }
-  .date-btn.disabled {
-    opacity: 0.3;
-    cursor: not-allowed;
-  }
+  .date-btn.disabled { opacity: 0.3; cursor: not-allowed; }
   .date-day {
     font-size: 10px;
     color: var(--text-dim);
@@ -271,11 +306,7 @@
     font-weight: 700;
   }
 
-  /* SUCCESS */
-  .success-screen {
-    text-align: center;
-    padding: 60px 20px;
-  }
+  /* SUCCESS / INACTIVE */
   .success-icon {
     width: 80px;
     height: 80px;
@@ -287,12 +318,6 @@
     margin: 0 auto 20px;
   }
   .success-icon svg { width: 36px; height: 36px; }
-
-  /* INACTIVE */
-  .inactive-screen {
-    text-align: center;
-    padding: 60px 20px;
-  }
   .inactive-icon {
     width: 64px; height: 64px;
     border-radius: 50%;
@@ -308,10 +333,7 @@
     font-size: 11px;
     color: var(--text-dim);
   }
-  .public-footer a {
-    color: var(--gold);
-    text-decoration: none;
-  }
+  .public-footer a { color: var(--gold); text-decoration: none; }
 </style>
 </head>
 <body>
@@ -325,42 +347,45 @@
     <!-- HERO -->
     <div class="public-hero">
       <div class="barber-avatar" id="barberAvatar">B</div>
-      <div class="barbershop-name" id="barbershopName">Barbearia</div>
+      <div class="barbershop-name" id="barbershopName"></div>
       <h1 class="barber-name" id="barberName">Barbeiro</h1>
       <p class="barber-bio" id="barberBio" style="display:none"></p>
     </div>
 
-    <!-- STEP 1: Serviço -->
-    <div class="step-card">
+    <!-- STEP 1: Barbeiro (só modo BARBERSHOP) -->
+    <div class="step-card" id="step1"></div>
+
+    <!-- STEP 2: Serviço -->
+    <div class="step-card" id="step2-services">
       <div class="step-h">
-        <div class="step-num">1</div>
+        <div class="step-num">2</div>
         <div class="step-title">Escolha o serviço</div>
       </div>
       <div id="servicosList"></div>
     </div>
 
-    <!-- STEP 2: Data -->
-    <div class="step-card" id="step2" style="display:none">
+    <!-- STEP 3: Data -->
+    <div class="step-card" id="step3-date" style="display:none">
       <div class="step-h">
-        <div class="step-num">2</div>
+        <div class="step-num">3</div>
         <div class="step-title">Escolha o dia</div>
       </div>
       <div class="dates-scroll" id="datesList"></div>
     </div>
 
-    <!-- STEP 3: Horário -->
-    <div class="step-card" id="step3" style="display:none">
+    <!-- STEP 4: Horário -->
+    <div class="step-card" id="step4-time" style="display:none">
       <div class="step-h">
-        <div class="step-num">3</div>
+        <div class="step-num">4</div>
         <div class="step-title">Escolha o horário</div>
       </div>
       <div class="horarios-grid" id="horariosList"></div>
     </div>
 
-    <!-- STEP 4: Dados do cliente -->
-    <div class="step-card" id="step4" style="display:none">
+    <!-- STEP 5: Dados do cliente -->
+    <div class="step-card" id="step5-form" style="display:none">
       <div class="step-h">
-        <div class="step-num">4</div>
+        <div class="step-num">5</div>
         <div class="step-title">Seus dados</div>
       </div>
       <form id="bookForm" onsubmit="confirmarAgendamento(event)">
@@ -376,6 +401,10 @@
 
         <!-- Resumo -->
         <div class="summary-card" id="summaryCard">
+          <div class="summary-row" id="sumBarbeiroRow" style="display:none">
+            <span style="color:var(--text-soft)">Barbeiro:</span>
+            <span id="sumBarbeiro">—</span>
+          </div>
           <div class="summary-row">
             <span style="color:var(--text-soft)">Serviço:</span>
             <span id="sumServico">—</span>
@@ -444,7 +473,7 @@
   </div>
 
   <div class="public-footer">
-    Sistema de agendamento por <a href="/" target="_blank">Cortify</a> · Para barbeiros autônomos
+    Sistema de agendamento por <a href="/" target="_blank">Cortify</a>
   </div>
 </div>
 
