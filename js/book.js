@@ -1,11 +1,15 @@
 // ============================================
-// CORTIFY - Página Pública de Agendamento
-// Adaptado pro book.html que está no Vercel
+// CORTIFY - Página Pública de Agendamento (v2)
+// Suporta MODO AUTÔNOMO + MODO BARBEARIA
 // ============================================
 
 const state = {
   slug: null,
-  barber: null,
+  mode: null,          // 'AUTONOMO' | 'BARBERSHOP'
+  barbershop: null,    // dados da barbearia (modo BARBERSHOP)
+  profile: null,       // dados do profile (modo AUTONOMO)
+  members: [],         // lista de barbeiros (modo BARBERSHOP)
+  selectedMember: null, // barbeiro escolhido (modo BARBERSHOP)
   servicos: [],
   servicoSelecionado: null,
   dataSelecionada: null,
@@ -43,6 +47,11 @@ function setSafe(id, value, prop = 'textContent') {
   if (el) el[prop] = value;
 }
 
+function getInitials(name) {
+  if (!name) return '?';
+  return name.split(' ').map(p => p[0]).slice(0, 2).join('').toUpperCase();
+}
+
 // ========== INICIALIZAÇÃO ==========
 (async function init() {
   const params = new URLSearchParams(window.location.search);
@@ -60,9 +69,7 @@ function setSafe(id, value, prop = 'textContent') {
   window.sb = sb;
 
   try {
-    await loadBarber();
-    await loadServicos();
-    await loadAgendamentos();
+    await loadPageInfo();
     showContent();
   } catch (err) {
     console.error(err);
@@ -71,28 +78,20 @@ function setSafe(id, value, prop = 'textContent') {
 })();
 
 function showContent() {
-  const loading = document.getElementById('loadingScreen');
-  const content = document.getElementById('contentScreen');
-  if (loading) loading.style.display = 'none';
-  if (content) content.style.display = 'block';
+  document.getElementById('loadingScreen').style.display = 'none';
+  document.getElementById('contentScreen').style.display = 'block';
 }
 
 function showInactive() {
-  const loading = document.getElementById('loadingScreen');
-  const content = document.getElementById('contentScreen');
-  const success = document.getElementById('successScreen');
-  const inactive = document.getElementById('inactiveScreen');
-  if (loading) loading.style.display = 'none';
-  if (content) content.style.display = 'none';
-  if (success) success.style.display = 'none';
-  if (inactive) inactive.style.display = 'block';
+  document.getElementById('loadingScreen').style.display = 'none';
+  document.getElementById('contentScreen').style.display = 'none';
+  document.getElementById('successScreen').style.display = 'none';
+  document.getElementById('inactiveScreen').style.display = 'block';
 }
 
 function showSuccess() {
-  const content = document.getElementById('contentScreen');
-  const success = document.getElementById('successScreen');
-  if (content) content.style.display = 'none';
-  if (success) success.style.display = 'block';
+  document.getElementById('contentScreen').style.display = 'none';
+  document.getElementById('successScreen').style.display = 'block';
 
   const ag = state.agendamentoConfirmado;
   const dataStr = ag.inicio.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' });
@@ -103,12 +102,19 @@ function showSuccess() {
   setSafe('confirmData', dataStr);
   setSafe('confirmHorario', horaStr);
 
-  // Link WhatsApp pro barbeiro
-  const phone = (state.barber.phone || '').replace(/\D/g, '');
+  // Link WhatsApp pro barbeiro/barbearia
+  const phone = (state.mode === 'BARBERSHOP'
+    ? (state.selectedMember?.phone || state.barbershop?.whatsapp)
+    : state.profile?.phone) || '';
+  const phoneClean = phone.replace(/\D/g, '');
   const link = document.getElementById('whatsAppConfirm');
-  if (phone && link) {
-    const msg = `Olá ${state.barber.name.split(' ')[0]}! Acabei de agendar pelo seu link:\n\n📅 ${dataStr} às ${horaStr}\n✂️ ${ag.servico.nome}\n\nMeu nome: ${ag.cliente_nome}`;
-    link.href = `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
+  if (phoneClean && link) {
+    const nomeBarbeiro = state.mode === 'BARBERSHOP'
+      ? state.selectedMember.display_name.split(' ')[0]
+      : state.profile.name.split(' ')[0];
+    const local = state.mode === 'BARBERSHOP' ? state.barbershop.name : nomeBarbeiro;
+    const msg = `Olá ${nomeBarbeiro}! Acabei de agendar pelo link:\n\n📅 ${dataStr} às ${horaStr}\n✂️ ${ag.servico.nome}\n📍 ${local}\n\nMeu nome: ${ag.cliente_nome}`;
+    link.href = `https://wa.me/${phoneClean}?text=${encodeURIComponent(msg)}`;
   } else if (link) {
     link.style.display = 'none';
   }
@@ -116,51 +122,174 @@ function showSuccess() {
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-// ========== CARREGA DADOS DO BARBEIRO ==========
-async function loadBarber() {
-  const { data, error } = await sb
-    .from('profiles')
-    .select('id, name, barbershop_name, slug, public_bio, work_schedule, phone')
-    .eq('slug', state.slug)
-    .eq('public_page_active', true)
-    .maybeSingle();
+// ========== CARREGA INFO DA PÁGINA ==========
+async function loadPageInfo() {
+  const { data, error } = await sb.rpc('get_public_page_info', { p_slug: state.slug });
 
-  if (error || !data) {
-    throw new Error('Barbeiro não encontrado');
+  if (error || !data || !data.success) {
+    throw new Error(data?.error || 'Página não encontrada');
   }
 
-  state.barber = data;
+  state.mode = data.mode;
 
-  const initials = (data.name || '?').split(' ').map(p => p[0]).slice(0, 2).join('').toUpperCase();
-  setSafe('barberAvatar', initials);
-  setSafe('barberName', data.name || '');
-  setSafe('barbershopName', data.barbershop_name || '');
+  if (state.mode === 'BARBERSHOP') {
+    state.barbershop = data.barbershop;
+    state.members = data.members || [];
+    renderBarbershopHero();
+    renderMemberSelection();
+  } else {
+    state.profile = data.profile;
+    renderAutonomoHero();
+    // No modo autônomo, carrega serviços direto
+    await loadServicosForBarber(state.profile.id, state.profile.work_schedule);
+  }
+
+  document.title = state.mode === 'BARBERSHOP'
+    ? `Agendar — ${state.barbershop.name}`
+    : `Agendar com ${state.profile.name}`;
+}
+
+// ========== RENDER HERO ==========
+function renderBarbershopHero() {
+  const b = state.barbershop;
+  setSafe('barberAvatar', getInitials(b.name));
+  setSafe('barbershopName', '');
+  setSafe('barberName', b.name);
 
   const bio = document.getElementById('barberBio');
   if (bio) {
-    if (data.public_bio) {
-      bio.textContent = data.public_bio;
+    if (b.description) {
+      bio.textContent = b.description;
       bio.style.display = 'block';
     } else {
       bio.style.display = 'none';
     }
   }
-
-  document.title = `Agendar com ${data.name} · Cortify`;
 }
 
-// ========== CARREGA SERVIÇOS ==========
-async function loadServicos() {
-  const { data, error } = await sb
-    .from('servicos')
-    .select('id, nome, preco, duracao_min')
-    .eq('user_id', state.barber.id)
-    .eq('ativo', true)
-    .order('preco');
+function renderAutonomoHero() {
+  const p = state.profile;
+  setSafe('barberAvatar', getInitials(p.name));
+  setSafe('barberName', p.name);
+  setSafe('barbershopName', p.barbershop_name || '');
 
-  if (error) throw error;
+  const bio = document.getElementById('barberBio');
+  if (bio) {
+    if (p.public_bio) {
+      bio.textContent = p.public_bio;
+      bio.style.display = 'block';
+    } else {
+      bio.style.display = 'none';
+    }
+  }
+}
 
-  state.servicos = data || [];
+// ========== MODO BARBEARIA: ESCOLHA DO BARBEIRO ==========
+function renderMemberSelection() {
+  const container = document.getElementById('step1');
+  if (!container) return;
+
+  if (state.members.length === 0) {
+    container.innerHTML = `
+      <div class="step-h">
+        <div class="step-num">1</div>
+        <div class="step-title">Sem barbeiros</div>
+      </div>
+      <div class="horarios-empty">Essa barbearia ainda não tem barbeiros ativos.</div>
+    `;
+    return;
+  }
+
+  // Se só tem 1 barbeiro, escolhe automático e mostra os serviços
+  if (state.members.length === 1) {
+    selecionarBarbeiro(state.members[0].user_id, true);
+    return;
+  }
+
+  container.innerHTML = `
+    <div class="step-h">
+      <div class="step-num">1</div>
+      <div class="step-title">Com qual barbeiro?</div>
+    </div>
+    <div class="members-grid">
+      ${state.members.map(m => `
+        <button class="member-card" data-id="${m.user_id}" onclick="selecionarBarbeiro('${m.user_id}')">
+          ${m.photo_url
+            ? `<img src="${escapeHtml(m.photo_url)}" alt="" class="member-photo">`
+            : `<div class="member-avatar">${getInitials(m.display_name)}</div>`
+          }
+          <div class="member-info">
+            <div class="member-name">${escapeHtml(m.display_name)}</div>
+            ${m.bio ? `<div class="member-bio">${escapeHtml(m.bio)}</div>` : ''}
+          </div>
+        </button>
+      `).join('')}
+    </div>
+  `;
+}
+
+window.selecionarBarbeiro = async function selecionarBarbeiro(userId, isAutoSelect = false) {
+  const member = state.members.find(m => m.user_id === userId);
+  if (!member) return;
+
+  state.selectedMember = member;
+  state.servicoSelecionado = null;
+  state.dataSelecionada = null;
+  state.horarioSelecionado = null;
+
+  // Highlight visual
+  document.querySelectorAll('.member-card').forEach(el => {
+    el.classList.toggle('selected', el.dataset.id === userId);
+  });
+
+  // Carrega work_schedule do barbeiro (vamos pegar via RPC)
+  // Por enquanto, usa o da barbearia ou um default
+  await loadServicosForBarber(userId, state.barbershop?.work_schedule || {});
+
+  // Mostra os steps seguintes
+  document.getElementById('step2-services').style.display = 'block';
+
+  if (!isAutoSelect) {
+    setTimeout(() => {
+      document.getElementById('step2-services').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
+  }
+};
+
+// ========== CARREGA SERVIÇOS + DISPONIBILIDADE ==========
+async function loadServicosForBarber(userId, fallbackWorkSchedule) {
+  const [servicosRes, availRes] = await Promise.all([
+    sb.rpc('get_public_barber_services', { p_user_id: userId }),
+    sb.rpc('get_public_barber_availability', { p_user_id: userId, p_days_ahead: DIAS_FUTURO })
+  ]);
+
+  if (servicosRes.error) {
+    console.error(servicosRes.error);
+    return;
+  }
+
+  state.servicos = (servicosRes.data || []).map(s => ({
+    id: s.service_id,
+    nome: s.nome,
+    preco: Number(s.preco),
+    duracao_min: s.duracao_min,
+  }));
+
+  const avail = availRes.data || { agendamentos: [], blocks: [] };
+  state.agendamentos = avail.agendamentos || [];
+  state.blocks = avail.blocks || [];
+
+  // Pega work_schedule do barbeiro - precisa ser do profile dele
+  // Como ainda não temos diretamente, vamos buscar
+  if (!state.selectedMemberWorkSchedule) {
+    const { data: profile } = await sb
+      .from('profiles')
+      .select('work_schedule')
+      .eq('id', userId)
+      .maybeSingle();
+    state.selectedMemberWorkSchedule = profile?.work_schedule || fallbackWorkSchedule || {};
+  }
+
   renderServicos();
 }
 
@@ -169,7 +298,7 @@ function renderServicos() {
   if (!container) return;
 
   if (state.servicos.length === 0) {
-    container.innerHTML = `<div class="horarios-empty">Esse barbeiro ainda não cadastrou serviços.</div>`;
+    container.innerHTML = `<div class="horarios-empty">Ainda não há serviços cadastrados.</div>`;
     return;
   }
 
@@ -185,7 +314,7 @@ function renderServicos() {
   `).join('');
 }
 
-function selecionarServico(id) {
+window.selecionarServico = function selecionarServico(id) {
   state.servicoSelecionado = state.servicos.find(s => s.id === id);
   state.dataSelecionada = null;
   state.horarioSelecionado = null;
@@ -194,46 +323,26 @@ function selecionarServico(id) {
     el.classList.toggle('selected', el.dataset.id === id);
   });
 
-  document.getElementById('step2').style.display = 'block';
-  document.getElementById('step3').style.display = 'none';
-  document.getElementById('step4').style.display = 'none';
+  document.getElementById('step3-date').style.display = 'block';
+  document.getElementById('step4-time').style.display = 'none';
+  document.getElementById('step5-form').style.display = 'none';
 
   renderDates();
 
   setTimeout(() => {
-    document.getElementById('step2').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    document.getElementById('step3-date').scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, 100);
-}
-
-// ========== CARREGA AGENDAMENTOS EXISTENTES ==========
-async function loadAgendamentos() {
-  const inicio = new Date();
-  inicio.setHours(0, 0, 0, 0);
-  const fim = new Date(inicio);
-  fim.setDate(fim.getDate() + DIAS_FUTURO);
-
-  const [agRes, blockRes] = await Promise.all([
-    sb.from('agendamentos')
-      .select('inicio, fim, status')
-      .eq('user_id', state.barber.id)
-      .gte('inicio', inicio.toISOString())
-      .lte('inicio', fim.toISOString())
-      .not('status', 'in', '(CANCELADO,FALTOU)'),
-
-    sb.from('schedule_blocks')
-      .select('inicio, fim')
-      .eq('user_id', state.barber.id)
-      .gte('fim', inicio.toISOString())
-  ]);
-
-  state.agendamentos = agRes.data || [];
-  state.blocks = blockRes.data || [];
-}
+};
 
 // ========== DATAS ==========
 function renderDates() {
   const container = document.getElementById('datesList');
   if (!container) return;
+
+  // Usa work_schedule do barbeiro/profile selecionado
+  const workSchedule = state.mode === 'BARBERSHOP'
+    ? (state.selectedMemberWorkSchedule || {})
+    : (state.profile.work_schedule || {});
 
   const dias = [];
   const hoje = new Date();
@@ -250,7 +359,7 @@ function renderDates() {
 
   container.innerHTML = dias.map(d => {
     const diaSem = d.getDay();
-    const work = state.barber.work_schedule?.[String(diaSem)];
+    const work = workSchedule[String(diaSem)];
     const ativo = work && work.active;
     const isoDate = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
@@ -266,14 +375,14 @@ function renderDates() {
   }).join('');
 
   // Auto-seleciona primeiro dia ativo
-  const primeiroAtivo = dias.find(d => state.barber.work_schedule?.[String(d.getDay())]?.active);
+  const primeiroAtivo = dias.find(d => workSchedule[String(d.getDay())]?.active);
   if (primeiroAtivo) {
     const iso = `${primeiroAtivo.getFullYear()}-${pad(primeiroAtivo.getMonth() + 1)}-${pad(primeiroAtivo.getDate())}`;
     selecionarData(iso);
   }
 }
 
-function selecionarData(isoDate) {
+window.selecionarData = function selecionarData(isoDate) {
   state.dataSelecionada = isoDate;
   state.horarioSelecionado = null;
 
@@ -281,25 +390,29 @@ function selecionarData(isoDate) {
     el.classList.toggle('selected', el.dataset.date === isoDate);
   });
 
-  document.getElementById('step3').style.display = 'block';
-  document.getElementById('step4').style.display = 'none';
+  document.getElementById('step4-time').style.display = 'block';
+  document.getElementById('step5-form').style.display = 'none';
 
   renderHorarios();
 
   setTimeout(() => {
-    document.getElementById('step3').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    document.getElementById('step4-time').scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, 100);
-}
+};
 
 // ========== HORÁRIOS ==========
 function renderHorarios() {
   const container = document.getElementById('horariosList');
   if (!container) return;
 
+  const workSchedule = state.mode === 'BARBERSHOP'
+    ? (state.selectedMemberWorkSchedule || {})
+    : (state.profile.work_schedule || {});
+
   const [y, m, d] = state.dataSelecionada.split('-').map(Number);
   const data = new Date(y, m - 1, d);
   const diaSem = data.getDay();
-  const work = state.barber.work_schedule?.[String(diaSem)];
+  const work = workSchedule[String(diaSem)];
 
   if (!work || !work.active) {
     container.innerHTML = `<div class="horarios-empty">Barbeiro não atende neste dia.</div>`;
@@ -318,20 +431,13 @@ function renderHorarios() {
     if (min >= 60) { min -= 60; h++; }
   }
 
-  if (slots.length === 0) {
-    container.innerHTML = `<div class="horarios-empty">Sem horários disponíveis neste dia.</div>`;
-    return;
-  }
-
   const agora = new Date();
 
   const slotsLivres = slots.map(slot => {
     const inicioSlot = new Date(y, m - 1, d, slot.h, slot.min, 0);
     const fimSlot = new Date(inicioSlot.getTime() + duracao * 60000);
 
-    if (inicioSlot <= agora) {
-      return { ...slot, disponivel: false };
-    }
+    if (inicioSlot <= agora) return { ...slot, disponivel: false };
 
     const fimMinutosDia = hFim * 60 + mFim;
     const fimSlotMinutosDia = fimSlot.getHours() * 60 + fimSlot.getMinutes();
@@ -364,15 +470,13 @@ function renderHorarios() {
   }
 
   container.innerHTML = livres.map(s => `
-    <button class="horario-btn" 
-            data-time="${pad(s.h)}:${pad(s.min)}"
-            onclick="selecionarHorario(${s.h}, ${s.min})">
+    <button class="horario-btn" data-time="${pad(s.h)}:${pad(s.min)}" onclick="selecionarHorario(${s.h}, ${s.min})">
       ${pad(s.h)}:${pad(s.min)}
     </button>
   `).join('');
 }
 
-function selecionarHorario(h, min) {
+window.selecionarHorario = function selecionarHorario(h, min) {
   state.horarioSelecionado = { h, min };
 
   document.querySelectorAll('.horario-btn').forEach(el => {
@@ -387,17 +491,28 @@ function selecionarHorario(h, min) {
   setSafe('sumHorario', `${pad(h)}:${pad(min)}`);
   setSafe('sumPreco', formatBRL(state.servicoSelecionado.preco));
 
-  document.getElementById('step4').style.display = 'block';
+  // Mostra barbeiro escolhido no resumo (só modo barbearia)
+  const sumBarbeiroRow = document.getElementById('sumBarbeiroRow');
+  if (sumBarbeiroRow) {
+    if (state.mode === 'BARBERSHOP' && state.selectedMember) {
+      sumBarbeiroRow.style.display = 'flex';
+      setSafe('sumBarbeiro', state.selectedMember.display_name);
+    } else {
+      sumBarbeiroRow.style.display = 'none';
+    }
+  }
+
+  document.getElementById('step5-form').style.display = 'block';
 
   setTimeout(() => {
-    document.getElementById('step4').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    document.getElementById('step5-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
     const nameInput = document.querySelector('input[name="nome"]');
     if (nameInput) nameInput.focus();
   }, 100);
-}
+};
 
 // ========== CONFIRMAR AGENDAMENTO ==========
-async function confirmarAgendamento(e) {
+window.confirmarAgendamento = async function confirmarAgendamento(e) {
   e.preventDefault();
 
   const form = e.target;
@@ -424,26 +539,34 @@ async function confirmarAgendamento(e) {
   const inicio = new Date(y, m - 1, d, state.horarioSelecionado.h, state.horarioSelecionado.min);
   const fim = new Date(inicio.getTime() + state.servicoSelecionado.duracao_min * 60000);
 
+  // Chama a função v2 que suporta barbearia + autônomo
+  const payload = {
+    p_slug: state.slug,
+    p_servico_id: state.servicoSelecionado.id,
+    p_cliente_phone: telefone,
+    p_cliente_nome: nome,
+    p_data_inicio: inicio.toISOString(),
+    p_data_fim: fim.toISOString(),
+    p_observacao: null,
+  };
+
+  if (state.mode === 'BARBERSHOP' && state.selectedMember) {
+    payload.p_barber_user_id = state.selectedMember.user_id;
+  }
+
   try {
-    const { data, error } = await sb.rpc('create_public_agendamento', {
-      barber_slug: state.slug,
-      p_servico_id: state.servicoSelecionado.id,
-      cliente_phone: telefone,
-      cliente_nome: nome,
-      data_inicio: inicio.toISOString(),
-      data_fim: fim.toISOString(),
-      observacao: null
-    });
+    const { data, error } = await sb.rpc('create_public_agendamento_v2', payload);
 
     if (error) throw error;
+    if (data && !data.success) throw new Error(data.error);
 
     state.agendamentoConfirmado = {
-      id: data,
+      id: data.agendamento_id,
       cliente_nome: nome,
       cliente_telefone: telefone,
       servico: state.servicoSelecionado,
       inicio,
-      fim
+      fim,
     };
 
     showSuccess();
@@ -464,13 +587,13 @@ async function confirmarAgendamento(e) {
       btn.textContent = 'Confirmar agendamento';
     }
 
-    await loadAgendamentos();
-    renderHorarios();
+    // Recarrega disponibilidade
+    const userId = state.mode === 'BARBERSHOP' ? state.selectedMember.user_id : state.profile.id;
+    const { data: avail } = await sb.rpc('get_public_barber_availability', { p_user_id: userId, p_days_ahead: DIAS_FUTURO });
+    if (avail) {
+      state.agendamentos = avail.agendamentos || [];
+      state.blocks = avail.blocks || [];
+      renderHorarios();
+    }
   }
-}
-
-// Globals
-window.selecionarServico = selecionarServico;
-window.selecionarData = selecionarData;
-window.selecionarHorario = selecionarHorario;
-window.confirmarAgendamento = confirmarAgendamento;
+};
