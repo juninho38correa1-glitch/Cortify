@@ -140,6 +140,27 @@
     .client-header-card { padding: 18px; }
     .client-stats { margin-left: 0; flex-direction: row; align-items: baseline; gap: 8px; margin-top: 10px; }
   }
+
+  /* Slot com múltiplos agendamentos no mesmo horário */
+  .slot-filled-multi {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--line-soft);
+    min-height: 56px;
+  }
+  .slot-filled-multi .slot-time {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    font-weight: 600;
+    min-width: 50px;
+    padding-top: 4px;
+  }
+  .slot-filled-multi .slot-content {
+    flex: 1;
+    min-width: 0;
+  }
 </style>
 </head>
 <body>
