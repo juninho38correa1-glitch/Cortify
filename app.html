@@ -163,6 +163,119 @@
   }
 
   /* ============================================
+     DASHBOARD BARBEARIA
+     ============================================ */
+  .dash-finance-grid {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr;
+    gap: 14px;
+  }
+  .dash-side-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+  @media (max-width: 800px) {
+    .dash-finance-grid, .dash-side-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .ranking-table {
+    display: grid;
+    gap: 2px;
+  }
+  .ranking-header {
+    display: grid;
+    grid-template-columns: 40px 1fr 70px 110px 100px;
+    gap: 10px;
+    padding: 8px 10px;
+    font-size: 10px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    font-weight: 600;
+    border-bottom: 1px solid var(--line);
+  }
+  .ranking-row {
+    display: grid;
+    grid-template-columns: 40px 1fr 70px 110px 100px;
+    gap: 10px;
+    padding: 10px;
+    align-items: center;
+    border-bottom: 1px solid var(--line-soft);
+    transition: background 0.15s;
+  }
+  .ranking-row:hover {
+    background: rgba(212,168,87,0.03);
+  }
+  .ranking-pos {
+    font-family: 'Playfair Display';
+    font-weight: 700;
+    font-size: 15px;
+    color: var(--gold);
+    text-align: center;
+  }
+
+  @media (max-width: 600px) {
+    .ranking-header {
+      grid-template-columns: 30px 1fr 70px 90px;
+      font-size: 9px;
+    }
+    .ranking-header > div:nth-child(5),
+    .ranking-row > div:nth-child(5) {
+      display: none;
+    }
+    .ranking-row {
+      grid-template-columns: 30px 1fr 70px 90px;
+    }
+  }
+
+  /* Folha de pagamento */
+  .payroll-table { display: grid; gap: 2px; }
+  .payroll-row {
+    display: grid;
+    grid-template-columns: 1fr 1.5fr 100px;
+    gap: 14px;
+    align-items: center;
+    padding: 14px 10px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .payroll-name {}
+  .payroll-details { font-size: 11px; }
+  .payroll-value {
+    font-family: 'Playfair Display';
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--gold);
+    text-align: right;
+  }
+  .payroll-total {
+    display: grid;
+    grid-template-columns: 1fr 100px;
+    padding: 16px 10px;
+    margin-top: 8px;
+    border-top: 2px solid var(--gold);
+    font-family: 'Playfair Display';
+    font-size: 18px;
+    font-weight: 700;
+    align-items: center;
+  }
+  .payroll-total > div:last-child {
+    text-align: right;
+  }
+
+  @media (max-width: 600px) {
+    .payroll-row {
+      grid-template-columns: 1fr 80px;
+    }
+    .payroll-details {
+      grid-column: 1 / -1;
+      margin-top: 4px;
+    }
+  }
+
+  /* ============================================
      AGENDA GRID MULTI-COLUNA (Google Calendar)
      ============================================ */
   .agenda-grid-container {
@@ -438,6 +551,10 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
       <span>Pacotes</span>
     </a>
+    <a class="side-link side-link-relatorios" data-view="relatorios" onclick="navigate('relatorios')" style="display:none">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+      <span>Relatórios</span>
+    </a>
 
     <div class="sidebar-section">Conta</div>
     <a class="side-link" data-view="conta" onclick="navigate('conta')">
@@ -572,6 +689,28 @@
         <button class="tab-btn" id="cfgTabBarbearia" onclick="setContaTab('barbearia')">Barbearia</button>
       </div>
       <div id="contaContent"></div>
+    </div>
+
+    <!-- Relatórios view (só Barbearia) -->
+    <div id="view-relatorios" class="view">
+      <div class="page-header">
+        <div>
+          <h1>Relatórios</h1>
+          <p class="sub" id="relatoriosSub">Análises da barbearia</p>
+        </div>
+        <div style="display:flex;gap:6px" id="relatoriosPeriodoFilter">
+          <button class="tab-btn active" data-periodo="hoje" onclick="setRelatorioPeriodo('hoje')">Hoje</button>
+          <button class="tab-btn" data-periodo="7d" onclick="setRelatorioPeriodo('7d')">7 dias</button>
+          <button class="tab-btn" data-periodo="mes" onclick="setRelatorioPeriodo('mes')">Mês</button>
+          <button class="tab-btn" data-periodo="mes-passado" onclick="setRelatorioPeriodo('mes-passado')">Mês passado</button>
+        </div>
+      </div>
+      <div class="tabs" style="margin-bottom:20px;flex-wrap:wrap">
+        <button class="tab-btn active" id="relTabGeral" onclick="setRelatorioTab('geral')">📊 Visão Geral</button>
+        <button class="tab-btn" id="relTabEquipe" onclick="setRelatorioTab('equipe')">👥 Equipe</button>
+        <button class="tab-btn" id="relTabFinanceiro" onclick="setRelatorioTab('financeiro')">💰 Financeiro</button>
+      </div>
+      <div id="relatoriosContent"></div>
     </div>
   </main>
 </div>
