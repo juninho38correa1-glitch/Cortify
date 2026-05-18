@@ -2404,7 +2404,7 @@ async function renderBarbeariaTab() {
       <div class="card-gradient" style="margin-bottom:18px">
         <div class="block-h">
           <h3>Minha Barbearia</h3>
-          <span class="pill ${state.barbeariaIsOwner ? 'pill-gold' : 'pill-soft'}">${state.barbeariaRole}</span>
+          <span class="pill ${state.barbeariaIsOwner ? 'pill-gold' : 'pill-soft'}">${roleLabel(state.barbeariaRole)}</span>
         </div>
         <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:14px">
           <div style="flex:1;min-width:240px">
@@ -2449,7 +2449,7 @@ async function renderBarbeariaTab() {
                 </div>
               ` : ''}
             </div>
-            <span class="pill ${m.role === 'OWNER' ? 'pill-gold' : 'pill-soft'}" style="font-size:10px">${m.role}</span>
+            <span class="pill ${m.role === 'OWNER' ? 'pill-gold' : 'pill-soft'}" style="font-size:10px">${roleLabel(m.role)}</span>
             ${canManage && m.role !== 'OWNER' ? `
               <button class="icon-btn" title="Editar membro" onclick="abrirEditarMembro('${m.id}')">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
@@ -2477,7 +2477,7 @@ async function renderBarbeariaTab() {
               <div style="width:36px;height:36px;border-radius:50%;background:rgba(212,168,87,0.1);color:var(--gold);display:grid;place-items:center;flex-shrink:0;font-size:16px">✉️</div>
               <div style="flex:1;min-width:0">
                 <div style="font-size:13px;font-weight:600">${escapeHtml(c.invited_name || c.invited_email)}</div>
-                <div style="font-size:11px;color:var(--text-dim);margin-top:2px">${escapeHtml(c.invited_email)} · ${c.invited_role}</div>
+                <div style="font-size:11px;color:var(--text-dim);margin-top:2px">${escapeHtml(c.invited_email)} · ${roleLabel(c.invited_role)}</div>
                 <div style="font-size:10px;color:var(--text-soft);margin-top:3px">⏳ Expira em ${expira} dia${expira !== 1 ? 's' : ''}</div>
               </div>
               <button class="btn btn-ghost btn-sm" onclick="copiarLinkConvite('${c.id}')">📋 Link</button>
@@ -2606,7 +2606,7 @@ async function confirmarVirarBarbearia(e) {
   else if (migration_mode === 'CLIENTS_ONLY') migracaoLabel = 'só clientes e serviços serão migrados';
   else migracaoLabel = 'a barbearia começa do ZERO';
 
-  if (!confirm(`Confirmar criação da barbearia "${name}"?\n\n• ${migracaoLabel}\n• Você vira OWNER\n• Sua conta muda de Autônomo pra Barbearia`)) {
+  if (!confirm(`Confirmar criação da barbearia "${name}"?\n\n• ${migracaoLabel}\n• Você vira o Dono\n• Sua conta muda de Autônomo pra Barbearia`)) {
     btn.disabled = false;
     btn.textContent = 'Criar Barbearia';
     return;
@@ -2811,7 +2811,7 @@ function showLinkConviteModal(link, inv, invitationId) {
   const roleLabel = {
     'BARBER': 'barbeiro',
     'MANAGER': 'gerente',
-    'RECEPTIONIST': 'recepcionista'
+    'RECEPTIONIST': 'recepção'
   }[inv?.invited_role] || 'membro';
 
   const nome = inv?.invited_name ? inv.invited_name.split(' ')[0] : '';
@@ -4231,6 +4231,30 @@ function escapeHtml(str) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
+}
+
+// ============ TRADUÇÃO DE ROLES ============
+// Mapeia role do banco (inglês) para texto exibido (português)
+const ROLE_LABELS = {
+  'OWNER': 'Dono',
+  'MANAGER': 'Gerente',
+  'BARBER': 'Barbeiro',
+  'RECEPTIONIST': 'Recepção',
+};
+
+const ROLE_LABELS_LOWER = {
+  'OWNER': 'dono',
+  'MANAGER': 'gerente',
+  'BARBER': 'barbeiro',
+  'RECEPTIONIST': 'recepcionista',
+};
+
+function roleLabel(role) {
+  return ROLE_LABELS[role] || role;
+}
+
+function roleLabelLower(role) {
+  return ROLE_LABELS_LOWER[role] || role;
 }
 
 function escapeJsonForAttr(obj) {
