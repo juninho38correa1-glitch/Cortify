@@ -2754,26 +2754,107 @@ async function enviarConvite(e) {
   setTimeout(() => renderBarbeariaTab(), 300);
 }
 
-// Copiar link de um convite existente
+// Copiar link de um convite existente (e abrir WhatsApp se tiver número)
 async function copiarLinkConvite(invitationId) {
-  // Busca token desse convite
-  const { data, error } = await sb
-    .from('barbershop_invitations')
-    .select('token')
-    .eq('id', invitationId)
-    .maybeSingle();
+  // Usa RPC com security definer (mais robusto que query direta)
+  const { data: token, error } = await sb.rpc('get_invitation_token', { p_invitation_id: invitationId });
 
-  if (error || !data) {
-    bf.toast('Erro ao buscar convite', 'error');
+  if (error || !token) {
+    bf.toast('Erro ao buscar convite: ' + (error?.message || 'sem permissão'), 'error');
     return;
   }
 
-  const link = `${window.location.origin}/accept-invite.html?token=${data.token}`;
+  const link = `${window.location.origin}/accept-invite.html?token=${token}`;
+
+  // Busca dados do convite pra montar mensagem do WhatsApp
+  const { data: inv } = await sb
+    .from('barbershop_invitations')
+    .select('invited_email, invited_name, invited_role')
+    .eq('id', invitationId)
+    .maybeSingle();
+
+  // Tenta copiar pra área de transferência
   try {
     await navigator.clipboard.writeText(link);
-    bf.toast('Link copiado!', 'success');
   } catch (e) {
-    prompt('Copie o link:', link);
+    // Ignora erro silencioso
+  }
+
+  // Mostra modal/prompt com opções
+  showLinkConviteModal(link, inv, invitationId);
+}
+
+// Mostra modal com link + opções de WhatsApp
+function showLinkConviteModal(link, inv, invitationId) {
+  // Remove modal anterior se existir
+  document.getElementById('linkConviteModalEl')?.remove();
+
+  const roleLabel = {
+    'BARBER': 'barbeiro',
+    'MANAGER': 'gerente',
+    'RECEPTIONIST': 'recepcionista'
+  }[inv?.invited_role] || 'membro';
+
+  const nome = inv?.invited_name ? inv.invited_name.split(' ')[0] : '';
+  const saudacao = nome ? `Oi ${nome}!` : 'Olá!';
+  const barbeariaNome = state.barearia?.name || state.barbearia?.name || 'nossa barbearia';
+
+  const msgWhats = `${saudacao} Você foi convidado pra trabalhar como ${roleLabel} na ${barbeariaNome} no Cortify.\n\nAcesse o link pra aceitar:\n${link}\n\nO convite expira em 7 dias.`;
+
+  // Detecta se invited_email parece um celular (pra abrir whats)
+  // Não temos telefone do convidado salvo - usuário cola onde quiser
+
+  const modal = document.createElement('div');
+  modal.id = 'linkConviteModalEl';
+  modal.className = 'modal-overlay open';
+  modal.innerHTML = `
+    <div class="modal" style="max-width:520px">
+      <div class="modal-header">
+        <div>
+          <h2>Link do convite</h2>
+          <div class="modal-header-sub">Compartilhe com ${escapeHtml(inv?.invited_email || 'a pessoa')}</div>
+        </div>
+        <button class="modal-close" onclick="document.getElementById('linkConviteModalEl').remove()">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div style="background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:14px;margin-bottom:14px;word-break:break-all;font-family:'JetBrains Mono', monospace;font-size:12px;color:var(--gold);line-height:1.5">${escapeHtml(link)}</div>
+
+        <p style="font-size:12px;color:var(--text-soft);margin-bottom:14px">✓ Link copiado pra área de transferência. Compartilhe assim:</p>
+
+        <div style="display:grid;gap:8px">
+          <button class="btn btn-primary" onclick="abrirWhatsConvite('${encodeURIComponent(msgWhats).replace(/'/g, '%27')}')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+            Abrir WhatsApp com mensagem pronta
+          </button>
+          <button class="btn btn-ghost" onclick="copiarLinkPraClipboard('${link.replace(/'/g, "\\'")}')">
+            📋 Copiar link de novo
+          </button>
+        </div>
+
+        <p style="font-size:11px;color:var(--text-dim);margin-top:14px;line-height:1.5">
+          ⏱️ O convite expira em 7 dias. Se o link não funcionar, peça pra pessoa fazer login com o email <strong style="color:var(--gold)">${escapeHtml(inv?.invited_email || '')}</strong>.
+        </p>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+}
+
+// Abre WhatsApp com mensagem pronta
+function abrirWhatsConvite(msgEncoded) {
+  // Sem número específico → abre WhatsApp pro usuário escolher contato
+  window.open(`https://wa.me/?text=${msgEncoded}`, '_blank');
+}
+
+// Copia link pra clipboard
+async function copiarLinkPraClipboard(link) {
+  try {
+    await navigator.clipboard.writeText(link);
+    bf.toast('✓ Link copiado!', 'success');
+  } catch (e) {
+    prompt('Copie o link manualmente:', link);
   }
 }
 
