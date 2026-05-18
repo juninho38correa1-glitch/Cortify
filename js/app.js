@@ -2368,11 +2368,8 @@ async function renderBarbeariaTab() {
   // Carrega dados extras da barbearia
   const [barbeariaRes, membrosRes, convitesRes] = await Promise.all([
     sb.from('barbershops').select('*').eq('id', state.barbearia.id).maybeSingle(),
-    sb.from('barbershop_members')
-      .select('*, profile:profiles(name, email, phone)')
-      .eq('barbershop_id', state.barbearia.id)
-      .eq('active', true)
-      .order('role'),
+    // Usa RPC com security definer (evita problema de RLS no profiles)
+    sb.rpc('list_barbershop_members', { p_barbershop_id: state.barbearia.id }),
     // Lista convites pendentes (só dá pra OWNER/MANAGER)
     ['OWNER', 'MANAGER'].includes(state.barbeariaRole)
       ? sb.rpc('list_barbershop_invitations', { p_barbershop_id: state.barbearia.id })
@@ -2380,7 +2377,23 @@ async function renderBarbeariaTab() {
   ]);
 
   const barbearia = barbeariaRes.data || {};
-  const membros = membrosRes.data || [];
+  // Normaliza pra usar o mesmo formato do código existente
+  const membros = (membrosRes.data || []).map(m => ({
+    id: m.member_id,
+    user_id: m.user_id,
+    role: m.role,
+    display_name: m.display_name,
+    commission_model: m.commission_model,
+    commission_percent: m.commission_percent,
+    rent_amount: m.rent_amount,
+    salary_amount: m.salary_amount,
+    active: m.active,
+    profile: {
+      name: m.profile_name,
+      email: m.profile_email,
+      phone: m.profile_phone,
+    },
+  }));
   const convites = (convitesRes.data || []).filter(c => c.status === 'PENDING');
   const canManage = ['OWNER', 'MANAGER'].includes(state.barbeariaRole);
 
