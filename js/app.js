@@ -3270,6 +3270,11 @@ const HORARIO_MIN = 6;     // limite mínimo absoluto
 const HORARIO_MAX = 23;    // limite máximo absoluto
 const SLOT_MIN = 30;       // slot de 30 minutos
 
+// Estado de filtro de barbeiro (só faz sentido em modo barbearia)
+// null = todos os barbeiros visíveis ao role
+// uuid = filtra por barbeiro específico
+state.agendaFilterUserId = null;
+
 // Detecta horários baseado nos agendamentos do dia
 function detectarHorarios(agendamentos) {
   if (!agendamentos || agendamentos.length === 0) {
@@ -3320,16 +3325,61 @@ function setAgendaView(view) {
 }
 
 async function renderAgenda() {
+  // Renderiza filtro de barbeiro se aplicável
+  await renderAgendaBarberFilter();
+
   if (agendaView === 'semana') {
     return renderAgendaSemana();
   }
   return renderAgendaDia();
 }
 
+// Filtro de barbeiro (visível pra OWNER/MANAGER/RECEPT em barbearia)
+async function renderAgendaBarberFilter() {
+  const container = document.getElementById("agendaBarberFilter");
+  if (!container) return;
+
+  // Só aparece se for membro de barbearia E tem permissão
+  const canSeeAll = state.barbearia && ['OWNER', 'MANAGER', 'RECEPTIONIST'].includes(state.barbeariaRole);
+
+  if (!canSeeAll) {
+    container.style.display = 'none';
+    return;
+  }
+
+  // Carrega membros (se ainda não carregou)
+  if (!state.barbeiroFilterCache) {
+    const { data } = await sb.rpc('list_barbershop_members', { p_barbershop_id: state.barbearia.id });
+    state.barbeiroFilterCache = (data || []).filter(m => m.active && m.role !== 'RECEPTIONIST');
+  }
+
+  const membros = state.barbeiroFilterCache;
+  const filtroAtual = state.agendaFilterUserId || 'TODOS';
+
+  container.style.display = 'block';
+  container.innerHTML = `
+    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;background:var(--bg-card);border:1px solid var(--line);border-radius:10px;padding:8px 10px">
+      <span style="font-size:11px;color:var(--text-dim);font-weight:600;letter-spacing:1px;text-transform:uppercase;padding:4px 8px">Ver agenda de:</span>
+      <button class="${filtroAtual === 'TODOS' ? 'btn btn-primary btn-sm' : 'btn btn-ghost btn-sm'}" onclick="setAgendaFilter(null)">Todos</button>
+      ${membros.map(m => `
+        <button class="${filtroAtual === m.user_id ? 'btn btn-primary btn-sm' : 'btn btn-ghost btn-sm'}" onclick="setAgendaFilter('${m.user_id}')">
+          ${escapeHtml(m.display_name || m.profile_name || '?')}
+        </button>
+      `).join('')}
+    </div>
+  `;
+}
+
+function setAgendaFilter(userId) {
+  state.agendaFilterUserId = userId;
+  renderAgenda();
+}
+
 async function renderAgendaDia() {
   const dateLabel = document.getElementById("agendaDateLabel");
   const list = document.getElementById("agendaList");
   const count = document.getElementById("agendaCount");
+  const btnHoje = document.getElementById("btnGoToday");
 
   const inicio = new Date(agendaCurrentDate);
   inicio.setHours(0, 0, 0, 0);
@@ -3349,19 +3399,38 @@ async function renderAgendaDia() {
     weekday: "long", day: "numeric", month: "long",
   });
 
+  // Esconde botão "Voltar pra hoje" quando já está em hoje
+  if (btnHoje) btnHoje.style.display = (diff === 0) ? 'none' : '';
+
   list.innerHTML = `<div style="padding:40px;text-align:center;color:var(--text-soft)">Carregando...</div>`;
 
-  const { data: agendamentos, error } = await sb
-    .from("agendamentos")
-    .select("*, cliente:clientes(id, nome, telefone), servico:servicos(nome, preco)")
-    .gte("inicio", inicio.toISOString())
-    .lte("inicio", fim.toISOString())
-    .order("inicio", { ascending: true });
+  // Usa RPC que respeita role (OWNER/MANAGER/RECEPT veem tudo, BARBER só dele)
+  const { data: agendamentosRaw, error } = await sb.rpc('get_agendamentos_view', {
+    p_start: inicio.toISOString(),
+    p_end: fim.toISOString(),
+    p_filter_user_id: state.agendaFilterUserId || null,
+  });
 
   if (error) {
     list.innerHTML = `<div style="color:var(--red);padding:20px">Erro: ${error.message}</div>`;
     return;
   }
+
+  // Normaliza pra formato esperado pelo resto do código
+  const agendamentos = (agendamentosRaw || []).map(a => ({
+    id: a.id,
+    inicio: a.inicio,
+    fim: a.fim,
+    status: a.status,
+    observacao: a.observacao,
+    cliente_id: a.cliente_id,
+    cliente: { id: a.cliente_id, nome: a.cliente_nome, telefone: a.cliente_telefone },
+    servico_id: a.servico_id,
+    servico: { nome: a.servico_nome, preco: a.servico_preco },
+    user_id: a.user_id,
+    barber_name: a.barber_name,
+    barbershop_id: a.barbershop_id,
+  }));
 
   // Pacotes ativos por cliente
   const clienteIds = (agendamentos || []).map(a => a.cliente_id);
@@ -3474,6 +3543,11 @@ async function renderAgendaDia() {
                     Pacote
                   </span>
                 ` : ''}
+                ${state.barbearia && ag.barber_name && ag.user_id !== state.user.id ? `
+                  <span class="pill pill-soft" style="font-size:10px">
+                    👤 ${escapeHtml(ag.barber_name)}
+                  </span>
+                ` : ''}
               </div>
               <div style="font-size:11px;color:var(--text-soft);margin-top:2px">
                 ${escapeHtml(ag.servico?.nome || "?")} · ${duracaoMin}min (até ${aFimStr}) · ${bf.formatBRL(ag.servico?.preco || 0)}
@@ -3517,17 +3591,41 @@ async function renderAgendaSemana() {
 
   list.innerHTML = `<div style="padding:40px;text-align:center;color:var(--text-soft)">Carregando...</div>`;
 
-  const { data: agendamentos, error } = await sb
-    .from("agendamentos")
-    .select("*, cliente:clientes(nome, telefone), servico:servicos(nome, preco)")
-    .gte("inicio", inicio.toISOString())
-    .lt("inicio", fim.toISOString())
-    .order("inicio", { ascending: true });
+  // Esconde botão "Voltar pra hoje" se está na semana atual
+  const btnHoje = document.getElementById("btnGoToday");
+  const hojeRef = new Date();
+  hojeRef.setHours(0,0,0,0);
+  const inicioRef = new Date(inicio);
+  inicioRef.setHours(0,0,0,0);
+  const diffDias = Math.round((inicioRef - hojeRef) / (1000 * 60 * 60 * 24));
+  if (btnHoje) btnHoje.style.display = (diffDias >= 0 && diffDias < 7) ? 'none' : '';
+
+  // Usa RPC (respeita role)
+  const { data: agendamentosRaw, error } = await sb.rpc('get_agendamentos_view', {
+    p_start: inicio.toISOString(),
+    p_end: fim.toISOString(),
+    p_filter_user_id: state.agendaFilterUserId || null,
+  });
 
   if (error) {
     list.innerHTML = `<div style="color:var(--red);padding:20px">Erro: ${error.message}</div>`;
     return;
   }
+
+  // Normaliza
+  const agendamentos = (agendamentosRaw || []).map(a => ({
+    id: a.id,
+    inicio: a.inicio,
+    fim: a.fim,
+    status: a.status,
+    cliente_id: a.cliente_id,
+    cliente: { id: a.cliente_id, nome: a.cliente_nome, telefone: a.cliente_telefone },
+    servico_id: a.servico_id,
+    servico: { nome: a.servico_nome, preco: a.servico_preco },
+    user_id: a.user_id,
+    barber_name: a.barber_name,
+    barbershop_id: a.barbershop_id,
+  }));
 
   count.textContent = `${(agendamentos || []).length} ${(agendamentos || []).length === 1 ? "agendamento na semana" : "agendamentos na semana"}`;
 
@@ -4235,3 +4333,6 @@ window.abrirEditarMembro = abrirEditarMembro;
 window.toggleEditCommissionFields = toggleEditCommissionFields;
 window.onEditCommissionChange = onEditCommissionChange;
 window.salvarEdicaoMembro = salvarEdicaoMembro;
+// Agenda multi-barbeiro
+window.renderAgendaBarberFilter = renderAgendaBarberFilter;
+window.setAgendaFilter = setAgendaFilter;
