@@ -2387,6 +2387,7 @@ async function renderBarbeariaTab() {
     commission_percent: m.commission_percent,
     rent_amount: m.rent_amount,
     salary_amount: m.salary_amount,
+    can_view_commission: m.can_view_commission, // NOVO: flag RBAC
     active: m.active,
     profile: {
       name: m.profile_name,
@@ -2439,7 +2440,7 @@ async function renderBarbeariaTab() {
             <div style="flex:1;min-width:0">
               <div style="font-size:13px;font-weight:600">${escapeHtml(m.display_name || m.profile?.name || '?')}</div>
               <div style="font-size:11px;color:var(--text-dim);margin-top:2px">${escapeHtml(m.profile?.email || '')}</div>
-              ${m.commission_model && m.commission_model !== 'NONE' ? `
+              ${m.can_view_commission && m.commission_model && m.commission_model !== 'NONE' ? `
                 <div style="font-size:10px;color:var(--text-soft);margin-top:3px">
                   ${m.commission_model === 'PERCENT' ? `💰 ${m.commission_percent}% de comissão` : ''}
                   ${m.commission_model === 'RENT' ? `🏠 Aluguel ${bf.formatBRL(m.rent_amount)}/mês` : ''}
@@ -2449,10 +2450,15 @@ async function renderBarbeariaTab() {
               ` : ''}
             </div>
             <span class="pill ${m.role === 'OWNER' ? 'pill-gold' : 'pill-soft'}" style="font-size:10px">${m.role}</span>
-            ${canManage && m.role !== 'OWNER' && m.user_id !== state.user.id ? `
-              <button class="icon-btn" title="Remover membro" onclick="removerMembro('${m.id}', '${escapeHtml(m.profile?.name || 'esse membro').replace(/'/g, "\\'")}')">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            ${canManage && m.role !== 'OWNER' ? `
+              <button class="icon-btn" title="Editar membro" onclick="abrirEditarMembro('${m.id}')">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
               </button>
+              ${m.user_id !== state.user.id ? `
+                <button class="icon-btn" title="Remover membro" onclick="removerMembro('${m.id}', '${escapeHtml(m.profile?.name || 'esse membro').replace(/'/g, "\\'")}')">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                </button>
+              ` : ''}
             ` : ''}
           </div>
         `).join('')}
@@ -2906,6 +2912,144 @@ async function removerMembro(memberId, nome) {
   }
 
   bf.toast('Membro removido', 'success');
+  renderBarbeariaTab();
+}
+
+// ============================================================
+// ========== EDITAR MEMBRO (Entrega 2 Parte B) ==========
+// ============================================================
+
+async function abrirEditarMembro(memberId) {
+  // Busca dados do membro pra edição
+  const { data, error } = await sb.rpc('get_barbershop_member_for_edit', { p_member_id: memberId });
+
+  if (error) {
+    bf.toast('Erro: ' + error.message, 'error');
+    return;
+  }
+  if (data && !data.success) {
+    bf.toast('Erro: ' + data.error, 'error');
+    return;
+  }
+
+  const m = data.member;
+
+  // Preenche form
+  const form = document.getElementById('editarMembroForm');
+  if (!form) return;
+  form.reset();
+
+  form.member_id.value = m.id;
+  form.role.value = m.role;
+  form.display_name.value = m.display_name || m.profile_name || '';
+
+  // Marca radio do modelo atual
+  const modeloAtual = m.commission_model || 'NONE';
+  form.querySelectorAll('input[name="commission_model"]').forEach(r => {
+    r.checked = (r.value === modeloAtual);
+  });
+  toggleEditCommissionFields(modeloAtual);
+
+  // Preenche valores
+  if (m.commission_percent) form.commission_percent.value = m.commission_percent;
+  if (m.rent_amount) form.rent_amount.value = m.rent_amount;
+  if (m.salary_amount) form.salary_amount.value = m.salary_amount;
+
+  // Mostra nome + email
+  document.getElementById('editMemberName').textContent = m.profile_name || '?';
+  document.getElementById('editMemberEmail').textContent = m.profile_email || '';
+
+  // Reset flag de "passado"
+  form.querySelectorAll('input[name="apply_to_past"]').forEach(r => r.checked = false);
+  document.getElementById('applyToPastSection').style.display = 'none';
+
+  // Guarda valores originais pra detectar mudança
+  form.dataset.originalModel = modeloAtual;
+  form.dataset.originalPercent = m.commission_percent || '';
+
+  document.getElementById('editarMembroModal').classList.add('open');
+}
+
+function toggleEditCommissionFields(modelo) {
+  document.getElementById('editFieldCommissionPercent').style.display = ['PERCENT', 'MIXED'].includes(modelo) ? 'block' : 'none';
+  document.getElementById('editFieldRentAmount').style.display = modelo === 'RENT' ? 'block' : 'none';
+  document.getElementById('editFieldSalary').style.display = ['SALARY', 'MIXED'].includes(modelo) ? 'block' : 'none';
+
+  document.querySelectorAll('#editCommissionOptions .commission-radio').forEach(el => {
+    el.classList.toggle('active', el.dataset.model === modelo);
+  });
+}
+
+// Detecta mudança no modelo de comissão pra mostrar opção "aplicar passado"
+function onEditCommissionChange() {
+  const form = document.getElementById('editarMembroForm');
+  if (!form) return;
+
+  const modeloNovo = form.querySelector('input[name="commission_model"]:checked')?.value;
+  const modeloOriginal = form.dataset.originalModel;
+  const percentNovo = form.commission_percent?.value || '';
+  const percentOriginal = form.dataset.originalPercent;
+
+  const mudouModelo = modeloNovo !== modeloOriginal;
+  const mudouPercent = percentNovo !== percentOriginal;
+
+  // Mostra pergunta SE mudou algo de comissão E modelo não é NONE
+  if ((mudouModelo || mudouPercent) && modeloNovo !== 'NONE') {
+    document.getElementById('applyToPastSection').style.display = 'block';
+  } else {
+    document.getElementById('applyToPastSection').style.display = 'none';
+  }
+}
+
+async function salvarEdicaoMembro(e) {
+  e.preventDefault();
+  const btn = document.getElementById('editMembroSaveBtn');
+  btn.disabled = true;
+  btn.textContent = 'Salvando...';
+
+  const fd = new FormData(e.target);
+  const modelo = fd.get('commission_model');
+  const applyToPast = fd.get('apply_to_past') === 'true';
+
+  const payload = {
+    p_member_id: fd.get('member_id'),
+    p_role: fd.get('role'),
+    p_display_name: fd.get('display_name')?.trim() || null,
+    p_commission_model: modelo,
+    p_apply_to_past: applyToPast,
+  };
+
+  if (['PERCENT', 'MIXED'].includes(modelo)) {
+    payload.p_commission_percent = Number(fd.get('commission_percent') || 0);
+  }
+  if (modelo === 'RENT') {
+    payload.p_rent_amount = Number(fd.get('rent_amount') || 0);
+  }
+  if (['SALARY', 'MIXED'].includes(modelo)) {
+    payload.p_salary_amount = Number(fd.get('salary_amount') || 0);
+  }
+
+  const { data, error } = await sb.rpc('update_barbershop_member', payload);
+
+  btn.disabled = false;
+  btn.textContent = 'Salvar alterações';
+
+  if (error) {
+    bf.toast('Erro: ' + error.message, 'error');
+    return;
+  }
+  if (data && !data.success) {
+    bf.toast('Erro: ' + data.error, 'error');
+    return;
+  }
+
+  let msg = '✓ Membro atualizado!';
+  if (applyToPast && data.past_atendimentos > 0) {
+    msg += ` (${data.past_atendimentos} atendimento(s) marcado(s) pra recálculo)`;
+  }
+  bf.toast(msg, 'success');
+
+  closeModal('editarMembroModal');
   renderBarbeariaTab();
 }
 
@@ -4083,3 +4227,11 @@ window.enviarConvite = enviarConvite;
 window.copiarLinkConvite = copiarLinkConvite;
 window.cancelarConvite = cancelarConvite;
 window.removerMembro = removerMembro;
+window.showLinkConviteModal = showLinkConviteModal;
+window.abrirWhatsConvite = abrirWhatsConvite;
+window.copiarLinkPraClipboard = copiarLinkPraClipboard;
+// Editar membro (Entrega 2 Parte B)
+window.abrirEditarMembro = abrirEditarMembro;
+window.toggleEditCommissionFields = toggleEditCommissionFields;
+window.onEditCommissionChange = onEditCommissionChange;
+window.salvarEdicaoMembro = salvarEdicaoMembro;
