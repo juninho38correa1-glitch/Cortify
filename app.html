@@ -161,6 +161,254 @@
     flex: 1;
     min-width: 0;
   }
+
+  /* ============================================
+     AGENDA GRID MULTI-COLUNA (Google Calendar)
+     ============================================ */
+  .agenda-grid-container {
+    background: var(--bg-card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    overflow: hidden;
+  }
+
+  .agenda-grid-header {
+    display: flex;
+    border-bottom: 1px solid var(--line);
+    background: linear-gradient(180deg, rgba(212,168,87,0.03) 0%, transparent 100%);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+
+  .grid-header-spacer {
+    min-width: 60px;
+    width: 60px;
+    flex-shrink: 0;
+    border-right: 1px solid var(--line);
+    background: var(--bg-card);
+  }
+
+  .grid-header-col {
+    flex: 1;
+    min-width: 140px;
+    padding: 12px 10px;
+    border-right: 1px solid var(--line);
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+  .grid-header-col:last-child { border-right: none; }
+
+  .grid-header-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--gold), var(--gold-soft));
+    color: #0a0a0a;
+    display: grid;
+    place-items: center;
+    font-family: 'Playfair Display', serif;
+    font-weight: 700;
+    font-size: 14px;
+  }
+  .grid-header-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .grid-header-count {
+    font-size: 10px;
+    color: var(--text-dim);
+    letter-spacing: 0.5px;
+  }
+
+  .agenda-grid-body {
+    position: relative;
+    display: flex;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+  }
+
+  .grid-time-col {
+    min-width: 60px;
+    width: 60px;
+    flex-shrink: 0;
+    position: relative;
+    border-right: 1px solid var(--line);
+    background: var(--bg-card);
+  }
+
+  .grid-time-label {
+    position: absolute;
+    left: 0;
+    right: 0;
+    padding: 0 8px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--text-dim);
+    transform: translateY(-6px);
+    text-align: right;
+  }
+
+  .grid-barber-col {
+    flex: 1;
+    min-width: 140px;
+    position: relative;
+    border-right: 1px solid var(--line);
+    background: 
+      repeating-linear-gradient(
+        180deg,
+        transparent,
+        transparent 35px,
+        rgba(255,255,255,0.02) 35px,
+        rgba(255,255,255,0.02) 36px
+      );
+  }
+  .grid-barber-col:last-child { border-right: none; }
+
+  .grid-empty-slot {
+    position: absolute;
+    left: 0;
+    right: 0;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .grid-empty-slot:hover {
+    background: rgba(212,168,87,0.08);
+  }
+  .grid-empty-slot::after {
+    content: '+';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: var(--gold);
+    font-size: 16px;
+    opacity: 0;
+    transition: opacity 0.15s;
+    font-weight: 400;
+  }
+  .grid-empty-slot:hover::after {
+    opacity: 0.5;
+  }
+
+  .grid-card {
+    position: absolute;
+    left: 4px;
+    right: 4px;
+    background: var(--bg);
+    border: 1px solid var(--gold);
+    border-left: 3px solid var(--gold);
+    border-radius: 6px;
+    padding: 4px 8px;
+    cursor: pointer;
+    overflow: hidden;
+    z-index: 2;
+    transition: transform 0.1s, box-shadow 0.15s;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  }
+  .grid-card:hover {
+    transform: scale(1.02);
+    z-index: 5;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  }
+  .grid-card-active {
+    background: linear-gradient(135deg, rgba(212,168,87,0.15), rgba(212,168,87,0.05));
+  }
+  .grid-card-done {
+    background: linear-gradient(135deg, rgba(111,207,151,0.12), rgba(111,207,151,0.04));
+    border-color: var(--green);
+    border-left-color: var(--green);
+    opacity: 0.75;
+  }
+  .grid-card-cancelled {
+    background: linear-gradient(135deg, rgba(224,116,116,0.1), rgba(224,116,116,0.03));
+    border-color: var(--red);
+    border-left-color: var(--red);
+    opacity: 0.55;
+    text-decoration: line-through;
+  }
+
+  .grid-card-time {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    color: var(--gold);
+    font-weight: 600;
+    line-height: 1.2;
+  }
+  .grid-card-done .grid-card-time { color: var(--green); }
+  .grid-card-cancelled .grid-card-time { color: var(--red); }
+  .grid-card-cliente {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text);
+    line-height: 1.2;
+    margin-top: 1px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .grid-card-servico {
+    font-size: 9px;
+    color: var(--text-soft);
+    line-height: 1.2;
+    margin-top: 1px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .grid-card-pill {
+    display: inline-block;
+    font-size: 8px;
+    color: var(--gold);
+    background: rgba(212,168,87,0.15);
+    padding: 1px 4px;
+    border-radius: 3px;
+    margin-top: 2px;
+    font-weight: 600;
+  }
+
+  .grid-now-line {
+    position: absolute;
+    left: 60px;
+    right: 0;
+    height: 2px;
+    background: var(--red);
+    z-index: 4;
+    box-shadow: 0 0 6px rgba(224,116,116,0.5);
+    pointer-events: none;
+  }
+  .grid-now-line::before {
+    content: '';
+    position: absolute;
+    left: -5px;
+    top: -4px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--red);
+  }
+
+  /* Mobile: scroll horizontal */
+  @media (max-width: 600px) {
+    .grid-header-col, .grid-barber-col {
+      min-width: 120px;
+    }
+    .grid-header-spacer, .grid-time-col {
+      min-width: 48px;
+      width: 48px;
+    }
+    .grid-time-label {
+      font-size: 9px;
+      padding: 0 4px;
+    }
+  }
 </style>
 </head>
 <body>
