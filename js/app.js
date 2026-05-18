@@ -3375,6 +3375,156 @@ function setAgendaFilter(userId) {
   renderAgenda();
 }
 
+// ============================================
+// GRID MULTI-COLUNA (estilo Google Calendar)
+// ============================================
+function renderAgendaGrid(agendamentos, pacotesPorCliente, listEl) {
+  const SLOT_MIN_GRID = 30;
+  const PX_POR_MIN = 1.2; // 1.2px por minuto => slot de 30min = 36px
+
+  // Pega lista de barbeiros (já carregada em renderAgendaBarberFilter)
+  const barbeiros = state.barbeiroFilterCache || [];
+
+  if (barbeiros.length === 0) {
+    listEl.innerHTML = `<div class="empty">Nenhum barbeiro encontrado</div>`;
+    return;
+  }
+
+  // Detecta horários (com folga pra mostrar slots vazios)
+  const { inicio: HORARIO_INICIO, fim: HORARIO_FIM } = detectarHorarios(agendamentos);
+
+  // Monta lista de horários (todos os 30min do dia útil)
+  const horarios = [];
+  for (let h = HORARIO_INICIO; h < HORARIO_FIM; h++) {
+    for (let m = 0; m < 60; m += SLOT_MIN_GRID) {
+      horarios.push({ h, m, str: `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}` });
+    }
+  }
+
+  // Agrupa agendamentos por barbeiro (user_id)
+  const agsPorBarbeiro = {};
+  barbeiros.forEach(b => { agsPorBarbeiro[b.user_id] = []; });
+  agendamentos.forEach(ag => {
+    if (!agsPorBarbeiro[ag.user_id]) agsPorBarbeiro[ag.user_id] = [];
+    agsPorBarbeiro[ag.user_id].push(ag);
+  });
+
+  // Função: calcula offset top em px de um agendamento (em relação ao HORARIO_INICIO)
+  const getOffsetTop = (date) => {
+    const d = new Date(date);
+    const minutosDesdeInicio = (d.getHours() - HORARIO_INICIO) * 60 + d.getMinutes();
+    return minutosDesdeInicio * PX_POR_MIN;
+  };
+
+  const totalAltura = (HORARIO_FIM - HORARIO_INICIO) * 60 * PX_POR_MIN;
+
+  // Cabeçalho com nomes dos barbeiros
+  const headerCols = barbeiros.map(b => `
+    <div class="grid-header-col">
+      <div class="grid-header-avatar">${bf.getInitials(b.display_name || b.profile_name || '?')}</div>
+      <div class="grid-header-name">${escapeHtml(b.display_name || b.profile_name || '?')}</div>
+      <div class="grid-header-count">${(agsPorBarbeiro[b.user_id] || []).length} agend.</div>
+    </div>
+  `).join('');
+
+  // Coluna de horários (esquerda)
+  const horariosCol = horarios.map((h, idx) => {
+    const top = idx * SLOT_MIN_GRID * PX_POR_MIN;
+    return `<div class="grid-time-label" style="top:${top}px">${h.str}</div>`;
+  }).join('');
+
+  // Pra cada barbeiro, monta uma coluna de slots vazios + agendamentos posicionados
+  const barberCols = barbeiros.map(b => {
+    const ags = agsPorBarbeiro[b.user_id] || [];
+
+    // Slots vazios clicáveis (pra criar agendamento)
+    const slotsVazios = horarios.map((h, idx) => {
+      const top = idx * SLOT_MIN_GRID * PX_POR_MIN;
+      return `
+        <div class="grid-empty-slot" 
+             style="top:${top}px;height:${SLOT_MIN_GRID * PX_POR_MIN}px"
+             onclick="openAgendamentoModalForBarber('${h.str}', '${b.user_id}')"
+             title="Adicionar agendamento ${h.str}">
+        </div>
+      `;
+    }).join('');
+
+    // Cards de agendamentos posicionados
+    const cards = ags.map(ag => {
+      const top = getOffsetTop(ag.inicio);
+      const duracaoMin = Math.round((new Date(ag.fim) - new Date(ag.inicio)) / 60000);
+      const altura = duracaoMin * PX_POR_MIN;
+      const isFinalizado = ag.status === "FINALIZADO";
+      const isCancelado = ag.status === "CANCELADO" || ag.status === "FALTOU";
+      const aInicio = new Date(ag.inicio);
+      const aFim = new Date(ag.fim);
+      const horarioStr = `${String(aInicio.getHours()).padStart(2,'0')}:${String(aInicio.getMinutes()).padStart(2,'0')}`;
+      const fimStr = `${String(aFim.getHours()).padStart(2,'0')}:${String(aFim.getMinutes()).padStart(2,'0')}`;
+
+      const statusClass = isFinalizado ? 'grid-card-done' : (isCancelado ? 'grid-card-cancelled' : 'grid-card-active');
+      const pacotesCliente = pacotesPorCliente[ag.cliente_id] || [];
+      const pacoteCobre = pacotesCliente.find(p =>
+        p.itens.some(i => i.servico_id === ag.servico_id && i.quantidade_usada < i.quantidade_total)
+      );
+
+      return `
+        <div class="grid-card ${statusClass}" 
+             style="top:${top}px;height:${Math.max(altura, 22)}px"
+             onclick='event.stopPropagation();openAgendamentoModal(${escapeJsonForAttr(ag)})'>
+          <div class="grid-card-time">${horarioStr} - ${fimStr}</div>
+          <div class="grid-card-cliente">${escapeHtml(ag.cliente?.nome || "?")}</div>
+          ${altura >= 36 ? `<div class="grid-card-servico">${escapeHtml(ag.servico?.nome || "?")}</div>` : ''}
+          ${pacoteCobre && !isFinalizado && !isCancelado && altura >= 50 ? `<div class="grid-card-pill">📦 Pacote</div>` : ''}
+        </div>
+      `;
+    }).join('');
+
+    return `
+      <div class="grid-barber-col" style="height:${totalAltura}px">
+        ${slotsVazios}
+        ${cards}
+      </div>
+    `;
+  }).join('');
+
+  // Linha "AGORA" (só se o dia visualizado for hoje)
+  let nowLine = '';
+  const hojeData = new Date();
+  hojeData.setHours(0,0,0,0);
+  const visData = new Date(agendaCurrentDate);
+  visData.setHours(0,0,0,0);
+  if (hojeData.getTime() === visData.getTime()) {
+    const agora = new Date();
+    const minutosAgora = (agora.getHours() - HORARIO_INICIO) * 60 + agora.getMinutes();
+    if (minutosAgora >= 0 && minutosAgora <= (HORARIO_FIM - HORARIO_INICIO) * 60) {
+      const topNow = minutosAgora * PX_POR_MIN;
+      nowLine = `<div class="grid-now-line" style="top:${topNow}px"></div>`;
+    }
+  }
+
+  // Render final
+  listEl.innerHTML = `
+    <div class="agenda-grid-container">
+      <div class="agenda-grid-header">
+        <div class="grid-header-spacer"></div>
+        ${headerCols}
+      </div>
+      <div class="agenda-grid-body" style="height:${totalAltura + 20}px">
+        <div class="grid-time-col">${horariosCol}</div>
+        ${barberCols}
+        ${nowLine}
+      </div>
+    </div>
+  `;
+}
+
+// Abrir modal de agendamento pré-preenchido com horário + barbeiro
+function openAgendamentoModalForBarber(horarioStr, userId) {
+  // Reaproveita o modal existente, mas pré-define o user_id
+  state.preselectedBarberId = userId;
+  openAgendamentoModalAtTime(horarioStr);
+}
+
 async function renderAgendaDia() {
   const dateLabel = document.getElementById("agendaDateLabel");
   const list = document.getElementById("agendaList");
@@ -3447,6 +3597,19 @@ async function renderAgendaDia() {
   }
 
   count.textContent = `${(agendamentos || []).length} ${(agendamentos || []).length === 1 ? "agendamento" : "agendamentos"}`;
+
+  // ============================================
+  // DECISÃO: Grid multi-coluna OU lista
+  // - Grid: quando OWNER/MANAGER/RECEPT vê "Todos" em barbearia com 2+ barbeiros
+  // - Lista: autônomo, BARBER, ou filtrou 1 barbeiro específico
+  // ============================================
+  const canSeeAll = state.barbearia && ['OWNER', 'MANAGER', 'RECEPTIONIST'].includes(state.barbeariaRole);
+  const semFiltro = !state.agendaFilterUserId;
+  const useGridView = canSeeAll && semFiltro && state.barbeiroFilterCache && state.barbeiroFilterCache.length >= 2;
+
+  if (useGridView) {
+    return renderAgendaGrid(agendamentos, pacotesPorCliente, list);
+  }
 
   // Detecta horários dinamicamente
   const { inicio: HORARIO_INICIO, fim: HORARIO_FIM } = detectarHorarios(agendamentos);
@@ -4399,3 +4562,4 @@ window.salvarEdicaoMembro = salvarEdicaoMembro;
 // Agenda multi-barbeiro
 window.renderAgendaBarberFilter = renderAgendaBarberFilter;
 window.setAgendaFilter = setAgendaFilter;
+window.openAgendamentoModalForBarber = openAgendamentoModalForBarber;
