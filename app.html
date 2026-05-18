@@ -827,6 +827,125 @@
   }
 </style>
 
+<!-- Modal: Editar Membro -->
+<div class="modal-overlay" id="editarMembroModal">
+  <div class="modal" style="max-width:540px">
+    <div class="modal-header">
+      <div>
+        <h2>Editar membro</h2>
+        <div class="modal-header-sub" id="editMemberHeaderSub">
+          <strong id="editMemberName" style="color:var(--text)"></strong> · <span id="editMemberEmail"></span>
+        </div>
+      </div>
+      <button class="modal-close" onclick="closeModal('editarMembroModal')">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+
+    <form id="editarMembroForm" onsubmit="salvarEdicaoMembro(event)">
+      <input type="hidden" name="member_id">
+
+      <div class="modal-body">
+        <!-- Nome de exibição -->
+        <div class="field" style="margin-top:0">
+          <label>Nome de exibição</label>
+          <input class="input" type="text" name="display_name" placeholder="Como aparece pros clientes">
+          <p class="field-hint">Pode ser apelido ou nome profissional</p>
+        </div>
+
+        <!-- Role -->
+        <div class="field">
+          <label>Função na barbearia</label>
+          <select class="select" name="role" required>
+            <option value="BARBER">Barbeiro</option>
+            <option value="MANAGER">Gerente</option>
+            <option value="RECEPTIONIST">Recepcionista</option>
+          </select>
+          <p class="field-hint">⚠️ Mudar a função altera as permissões automaticamente</p>
+        </div>
+
+        <!-- Modelo de comissão -->
+        <div class="field">
+          <label>Modelo de pagamento</label>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(120px, 1fr));gap:8px;margin-top:6px" id="editCommissionOptions">
+            <label class="commission-radio" data-model="NONE" onclick="toggleEditCommissionFields('NONE');onEditCommissionChange()">
+              <input type="radio" name="commission_model" value="NONE" style="display:none">
+              <div style="font-size:11px;color:var(--text-dim);font-weight:600;letter-spacing:1px">SEM</div>
+              <div style="font-size:13px;font-weight:600;margin-top:4px">Sem comissão</div>
+            </label>
+            <label class="commission-radio" data-model="PERCENT" onclick="toggleEditCommissionFields('PERCENT');onEditCommissionChange()">
+              <input type="radio" name="commission_model" value="PERCENT" style="display:none">
+              <div style="font-size:11px;color:var(--text-dim);font-weight:600;letter-spacing:1px">%</div>
+              <div style="font-size:13px;font-weight:600;margin-top:4px">Comissão</div>
+            </label>
+            <label class="commission-radio" data-model="RENT" onclick="toggleEditCommissionFields('RENT');onEditCommissionChange()">
+              <input type="radio" name="commission_model" value="RENT" style="display:none">
+              <div style="font-size:11px;color:var(--text-dim);font-weight:600;letter-spacing:1px">$</div>
+              <div style="font-size:13px;font-weight:600;margin-top:4px">Aluguel</div>
+            </label>
+            <label class="commission-radio" data-model="SALARY" onclick="toggleEditCommissionFields('SALARY');onEditCommissionChange()">
+              <input type="radio" name="commission_model" value="SALARY" style="display:none">
+              <div style="font-size:11px;color:var(--text-dim);font-weight:600;letter-spacing:1px">FIXO</div>
+              <div style="font-size:13px;font-weight:600;margin-top:4px">Salário</div>
+            </label>
+            <label class="commission-radio" data-model="MIXED" onclick="toggleEditCommissionFields('MIXED');onEditCommissionChange()">
+              <input type="radio" name="commission_model" value="MIXED" style="display:none">
+              <div style="font-size:11px;color:var(--text-dim);font-weight:600;letter-spacing:1px">MIX</div>
+              <div style="font-size:13px;font-weight:600;margin-top:4px">Misto</div>
+            </label>
+          </div>
+        </div>
+
+        <!-- Campos condicionais -->
+        <div class="field" id="editFieldCommissionPercent" style="display:none">
+          <label>Comissão (%)</label>
+          <input class="input" type="number" name="commission_percent" step="0.01" min="0" max="100" placeholder="50.00" oninput="onEditCommissionChange()">
+        </div>
+
+        <div class="field" id="editFieldRentAmount" style="display:none">
+          <label>Aluguel mensal (R$)</label>
+          <input class="input" type="number" name="rent_amount" step="0.01" min="0" placeholder="500.00" oninput="onEditCommissionChange()">
+        </div>
+
+        <div class="field" id="editFieldSalary" style="display:none">
+          <label>Salário base (R$)</label>
+          <input class="input" type="number" name="salary_amount" step="0.01" min="0" placeholder="2000.00" oninput="onEditCommissionChange()">
+        </div>
+
+        <!-- Seção: aplicar no passado -->
+        <div id="applyToPastSection" style="display:none;background:rgba(212,168,87,0.06);border:1px solid rgba(212,168,87,0.25);border-radius:10px;padding:14px;margin-top:12px">
+          <div style="font-size:12px;font-weight:600;color:var(--gold);margin-bottom:10px;letter-spacing:1px;text-transform:uppercase">⚠️ Como aplicar a mudança?</div>
+          <div style="display:grid;gap:8px">
+            <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding:10px;background:var(--bg-card);border:1px solid var(--line);border-radius:8px">
+              <input type="radio" name="apply_to_past" value="false" checked style="margin-top:3px">
+              <div>
+                <div style="font-size:13px;font-weight:600">Só atendimentos futuros</div>
+                <div style="font-size:11px;color:var(--text-soft);margin-top:2px">Atendimentos passados mantêm a comissão antiga (recomendado)</div>
+              </div>
+            </label>
+            <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding:10px;background:var(--bg-card);border:1px solid var(--line);border-radius:8px">
+              <input type="radio" name="apply_to_past" value="true" style="margin-top:3px">
+              <div>
+                <div style="font-size:13px;font-weight:600">Aplicar em todos atendimentos (passado e futuro)</div>
+                <div style="font-size:11px;color:var(--text-soft);margin-top:2px">⚠️ Recalcula histórico financeiro</div>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <div style="background:rgba(212,168,87,0.04);border:1px solid rgba(212,168,87,0.15);border-radius:8px;padding:12px;font-size:11px;color:var(--text-soft);line-height:1.5;margin-top:10px">
+          💡 <strong style="color:var(--gold)">Nota:</strong> Mudanças na função (Barber → Manager, etc) ajustam as permissões automaticamente. O recálculo do passado fica registrado, mas os valores reais serão recalculados quando os relatórios financeiros forem gerados.
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-ghost" onclick="closeModal('editarMembroModal')">Cancelar</button>
+        <button type="submit" class="btn btn-primary" id="editMembroSaveBtn">Salvar alterações</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <!-- Scripts -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="js/config.js"></script>
