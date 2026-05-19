@@ -236,18 +236,22 @@ window.selecionarBarbeiro = async function selecionarBarbeiro(userId, isAutoSele
   state.servicoSelecionado = null;
   state.dataSelecionada = null;
   state.horarioSelecionado = null;
+  
+  // ⭐ FIX: reseta o work_schedule e usa o que VEM do membro
+  state.selectedMemberWorkSchedule = member.work_schedule || state.barbershop?.work_schedule || {};
 
   // Highlight visual
   document.querySelectorAll('.member-card').forEach(el => {
     el.classList.toggle('selected', el.dataset.id === userId);
   });
 
-  // Carrega work_schedule do barbeiro (vamos pegar via RPC)
-  // Por enquanto, usa o da barbearia ou um default
-  await loadServicosForBarber(userId, state.barbershop?.work_schedule || {});
+  await loadServicosForBarber(userId, state.selectedMemberWorkSchedule);
 
   // Mostra os steps seguintes
   document.getElementById('step2-services').style.display = 'block';
+  document.getElementById('step3-date').style.display = 'none';
+  document.getElementById('step4-time').style.display = 'none';
+  document.getElementById('step5-form').style.display = 'none';
 
   if (!isAutoSelect) {
     setTimeout(() => {
@@ -279,17 +283,7 @@ async function loadServicosForBarber(userId, fallbackWorkSchedule) {
   state.agendamentos = avail.agendamentos || [];
   state.blocks = avail.blocks || [];
 
-  // Pega work_schedule do barbeiro - precisa ser do profile dele
-  // Como ainda não temos diretamente, vamos buscar
-  if (!state.selectedMemberWorkSchedule) {
-    const { data: profile } = await sb
-      .from('profiles')
-      .select('work_schedule')
-      .eq('id', userId)
-      .maybeSingle();
-    state.selectedMemberWorkSchedule = profile?.work_schedule || fallbackWorkSchedule || {};
-  }
-
+  // work_schedule já foi setado em selecionarBarbeiro (ou no init pra modo AUTONOMO)
   renderServicos();
 }
 
