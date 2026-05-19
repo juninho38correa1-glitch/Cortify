@@ -11,6 +11,133 @@ const state = {
   currentClienteId: null,
 };
 
+// ========== TEMPLATES DE WHATSAPP ==========
+// Templates centralizados pra manter consistência e tom profissional
+const WHATSAPP_TEMPLATES = {
+  // Confirmação após agendamento online
+  confirmacao: (ctx) => {
+    const local = ctx.barbeariaNome || ctx.barbeiroNome;
+    const barbeiroLine = ctx.barbeiroNome && ctx.barbeariaNome
+      ? `\n👤 *Com:* ${ctx.barbeiroNome}`
+      : '';
+    return `Oi ${ctx.clienteNome.split(' ')[0]}! 👋
+
+Aqui é da *${local}*. Recebi seu agendamento online:
+
+📅 *${ctx.dataFormatada}*
+🕐 *${ctx.horario}*
+✂️ ${ctx.servicoNome}${barbeiroLine}
+
+Confirma pra mim? 🙏
+
+Qualquer coisa é só responder aqui.`;
+  },
+
+  // Lembrete 1 dia antes
+  lembrete24h: (ctx) => {
+    const local = ctx.barbeariaNome || ctx.barbeiroNome;
+    return `Oi ${ctx.clienteNome.split(' ')[0]}! 👋
+
+Lembrando que amanhã (${ctx.dataFormatada}) você tem horário às *${ctx.horario}* na *${local}* pra ${ctx.servicoNome}.
+
+Tá confirmado? ✂️`;
+  },
+
+  // Lembrete poucas horas antes
+  lembreteHoje: (ctx) => {
+    return `Oi ${ctx.clienteNome.split(' ')[0]}! 👋
+
+Lembrando do seu horário hoje às *${ctx.horario}* pra ${ctx.servicoNome}. 
+
+Te espero! ✂️`;
+  },
+
+  // Parabéns aniversário
+  aniversario: (ctx) => {
+    return `Parabéns, ${ctx.clienteNome.split(' ')[0]}! 🎉🎂
+
+Hoje é seu dia. Aparece pra um corte com mimo da casa.
+
+Quando der pra dar uma passada? 💈`;
+  },
+
+  // Cliente sumido (60+ dias)
+  reativacao: (ctx) => {
+    return `Oi ${ctx.clienteNome.split(' ')[0]}! 👋
+
+Faz um tempinho que você não aparece. Tá tudo bem?
+
+Bora marcar um horário? 💈`;
+  },
+
+  // Pacote acabando
+  pacoteAcabando: (ctx) => {
+    return `Oi ${ctx.clienteNome.split(' ')[0]}! 👋
+
+Vi aqui que seu pacote tá acabando.
+
+Quer já garantir o próximo? ✂️`;
+  },
+
+  // Genérico (oi)
+  generico: (ctx) => {
+    return `Oi ${ctx.clienteNome ? ctx.clienteNome.split(' ')[0] : ''}! 👋`;
+  },
+};
+
+// Constrói link WhatsApp com template
+function buildWhatsLink(telefone, templateKey, ctx) {
+  const fone = String(telefone || '').replace(/\D/g, '');
+  if (!fone) return '#';
+  
+  const fn = WHATSAPP_TEMPLATES[templateKey] || WHATSAPP_TEMPLATES.generico;
+  const msg = fn(ctx || {});
+  return `https://wa.me/${fone}?text=${encodeURIComponent(msg)}`;
+}
+
+// Formata data pra WhatsApp ("sexta, 23 de maio")
+function formatDataWhats(date) {
+  const d = new Date(date);
+  return d.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' });
+}
+
+// Marca agendamento como CONFIRMADO (após clicar no botão "Confirmar via WhatsApp")
+async function marcarComoConfirmado(agendamentoId) {
+  if (!agendamentoId) return;
+  try {
+    const { error } = await sb
+      .from('agendamentos')
+      .update({ status: 'CONFIRMADO' })
+      .eq('id', agendamentoId);
+    
+    if (error) {
+      console.error('Erro ao confirmar:', error);
+      return;
+    }
+    
+    // Registra no log (opcional)
+    try {
+      await sb.from('reminder_log').insert({
+        agendamento_id: agendamentoId,
+        user_id: state.user.id,
+        tipo: 'CONFIRMACAO_WHATSAPP',
+        canal: 'WHATSAPP_MANUAL',
+      });
+    } catch (e) { /* log é opcional, ignora */ }
+    
+    // Re-renderiza agenda depois de um tempinho (deixa o WhatsApp abrir primeiro)
+    setTimeout(() => {
+      if (state.currentView === 'agenda') {
+        renderAgenda();
+      } else if (state.currentView === 'dashboard') {
+        renderDashboard();
+      }
+    }, 800);
+  } catch (err) {
+    console.error('Erro ao marcar como confirmado:', err);
+  }
+}
+
 // ========== INICIALIZAÇÃO ==========
 (async function init() {
   state.user = await bf.requireAuth();
@@ -389,21 +516,33 @@ async function renderBarbershopDashboard() {
       p_end_date: range.fim.toISOString(),
       p_limit: 5,
     }),
-    // Próximos agendamentos só se for hoje
-    dashPeriodo === 'hoje'
-      ? sb.rpc('get_agendamentos_view', {
-          p_start: new Date().toISOString(),
-          p_end: (() => { const e = new Date(); e.setHours(23,59,59,999); return e.toISOString(); })(),
-          p_filter_user_id: null,
-        })
-      : Promise.resolve({ data: [] }),
+    // Agendamentos das próximas 48h (pra "a confirmar" + "próximos")
+    sb.rpc('get_agendamentos_view', {
+      p_start: new Date().toISOString(),
+      p_end: (() => { const e = new Date(); e.setHours(e.getHours() + 48); return e.toISOString(); })(),
+      p_filter_user_id: null,
+    }),
   ]);
 
   const m = metricsRes.data || {};
   const ranking = rankingRes.data || [];
   const topServicos = topServicosRes.data || [];
-  const proximos = (proxAgendaRes.data || [])
-    .filter(a => a.status === 'AGENDADO' || a.status === 'CONFIRMADO')
+  const todosUpcoming = (proxAgendaRes.data || [])
+    .filter(a => a.status === 'AGENDADO' || a.status === 'CONFIRMADO');
+
+  // Separação: a confirmar vs próximos
+  const aConfirmar = todosUpcoming
+    .filter(a => a.status === 'AGENDADO')
+    .slice(0, 10);
+  
+  // Próximos: confirmados de HOJE
+  const hojeStart = new Date(); hojeStart.setHours(0,0,0,0);
+  const hojeFim = new Date(); hojeFim.setHours(23,59,59,999);
+  const proximos = todosUpcoming
+    .filter(a => {
+      const dt = new Date(a.inicio);
+      return a.status === 'CONFIRMADO' && dt >= hojeStart && dt <= hojeFim;
+    })
     .slice(0, 5);
 
   // Fallback se erro
@@ -482,6 +621,61 @@ async function renderBarbershopDashboard() {
         </div>
       `}
     </div>
+
+    <!-- A confirmar (agendamentos online pendentes) -->
+    ${aConfirmar.length > 0 ? `
+      <div class="card-gradient" style="margin-bottom:20px;border-color:rgba(255,183,62,0.3)">
+        <div class="block-h">
+          <h3>📲 ${aConfirmar.length} agendamento${aConfirmar.length !== 1 ? 's' : ''} a confirmar</h3>
+          <span class="pill pill-soft" style="color:#ffb73e;border-color:rgba(255,183,62,0.3);background:rgba(255,183,62,0.1);font-size:10px">PENDENTE</span>
+        </div>
+        <p style="font-size:12px;color:var(--text-soft);margin-bottom:14px">Clientes agendaram pela página pública. Mande mensagem de confirmação no WhatsApp:</p>
+        ${aConfirmar.map(p => {
+          const dt = new Date(p.inicio);
+          const horario = dt.toTimeString().slice(0, 5);
+          const dataFormatada = formatDataWhats(dt);
+          const eHoje = (() => {
+            const h = new Date(); h.setHours(0,0,0,0);
+            const d = new Date(p.inicio); d.setHours(0,0,0,0);
+            return h.getTime() === d.getTime();
+          })();
+          const eAmanha = (() => {
+            const a = new Date(); a.setDate(a.getDate() + 1); a.setHours(0,0,0,0);
+            const d = new Date(p.inicio); d.setHours(0,0,0,0);
+            return a.getTime() === d.getTime();
+          })();
+          const dataLabel = eHoje ? 'Hoje' : (eAmanha ? 'Amanhã' : dt.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }));
+
+          const whatsCtx = {
+            clienteNome: p.cliente_nome || '',
+            dataFormatada,
+            horario,
+            servicoNome: p.servico_nome || 'seu atendimento',
+            barbeariaNome: state.barbearia?.name,
+            barbeiroNome: p.barber_name,
+          };
+          return `
+            <div style="display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--line-soft)">
+              <div style="text-align:center;min-width:55px">
+                <div style="font-size:10px;color:var(--gold);font-weight:600;letter-spacing:1px;text-transform:uppercase">${dataLabel}</div>
+                <div style="font-family:'Playfair Display';font-size:18px;font-weight:700;color:var(--gold)">${horario}</div>
+              </div>
+              <div style="flex:1;min-width:0">
+                <div style="font-size:13px;font-weight:600">${escapeHtml(p.cliente_nome || '?')}</div>
+                <div style="font-size:11px;color:var(--text-soft);margin-top:2px">${escapeHtml(p.servico_nome || '?')} · 👤 ${escapeHtml(p.barber_name || '?')}</div>
+              </div>
+              <a href="${buildWhatsLink(p.cliente_telefone, 'confirmacao', whatsCtx)}" 
+                 target="_blank" 
+                 class="btn btn-primary btn-sm" 
+                 style="padding:6px 12px;font-size:11px"
+                 onclick="marcarComoConfirmado('${p.id}')">
+                📲 Confirmar
+              </a>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    ` : ''}
 
     <!-- Próximos atendimentos -->
     ${dashPeriodo === 'hoje' && proximos.length > 0 ? `
@@ -2495,6 +2689,33 @@ function renderLembreteRow(a, enviado) {
   `;
 }
 
+// Marca agendamento como CONFIRMADO (chamado quando barbeiro clica "📲 Confirmar")
+async function marcarComoConfirmado(agendamentoId) {
+  // Atualiza status pra CONFIRMADO
+  const { error } = await sb
+    .from('agendamentos')
+    .update({ status: 'CONFIRMADO' })
+    .eq('id', agendamentoId);
+
+  if (error) {
+    console.error('Erro ao confirmar:', error);
+    return;
+  }
+
+  // Registra no log de lembretes (mantém histórico)
+  await sb.from('reminder_log').insert({
+    agendamento_id: agendamentoId,
+    user_id: state.user.id,
+    channel: 'whatsapp',
+    sent_by_method: 'manual_confirmacao'
+  }).select(); // .select() pra não dar erro se a tabela tiver constraint
+
+  // Recarrega agenda após pequeno delay (deixa o WhatsApp abrir primeiro)
+  setTimeout(() => {
+    if (typeof renderAgenda === 'function') renderAgenda();
+  }, 800);
+}
+
 async function marcarLembreteEnviado(agendamentoId) {
   // Insere no log
   await sb.from('reminder_log').insert({
@@ -2993,8 +3214,24 @@ async function renderNotificacoes() {
         <div class="block-h"><h3>O que quero receber</h3></div>
         <p style="font-size:12px;color:var(--text-dim);margin-bottom:14px">Escolhe quais alertas te importam. Você pode mudar isso a qualquer momento.</p>
 
+        ${state.barbearia ? `
+          <div style="font-size:11px;letter-spacing:2px;color:var(--gold);font-weight:600;text-transform:uppercase;margin:8px 0 4px">
+            🏪 Barbearia · ${escapeHtml(state.barbearia.name)}
+          </div>
+          ${renderNotifToggle('notif_novo_ag_publico', userPrefs.notif_novo_ag_publico !== false, '📲 Agendamentos comigo (página pública)', 'Quando alguém marca COMIGO pelo link da barbearia')}
+          ${['OWNER', 'MANAGER'].includes(state.barbeariaRole) ? `
+            ${renderNotifToggle('notif_novo_ag_equipe', userPrefs.notif_novo_ag_equipe === true, '👥 Agendamentos da equipe', 'Notifica TODO agendamento da equipe (mesmo que não seja comigo)')}
+          ` : ''}
+          ${renderNotifToggle('notif_cancelamento', userPrefs.notif_cancelamento !== false, '❌ Cancelamentos', 'Quando alguém cancela um agendamento')}
+          ${renderNotifToggle('notif_agendamento_proximo', userPrefs.notif_agendamento_proximo !== false, '⏰ 1h antes de atender', 'Lembrete pra se preparar')}
+
+          <div style="font-size:11px;letter-spacing:2px;color:var(--text-dim);font-weight:600;text-transform:uppercase;margin:18px 0 4px">
+            ⚙️ Geral
+          </div>
+        ` : ''}
+
         ${renderNotifToggle('notif_lembrete_15min', userPrefs.notif_lembrete_15min, '🕐 Lembrete 15 min antes do agendamento', 'Aviso pra você ficar pronto antes do cliente chegar')}
-        ${renderNotifToggle('notif_novo_agendamento', userPrefs.notif_novo_agendamento !== false, '📅 Novo agendamento pela página pública', 'Quando alguém marca pelo seu link público')}
+        ${renderNotifToggle('notif_novo_agendamento', userPrefs.notif_novo_agendamento !== false, '📅 Novo agendamento pela página pública (autônomo)', 'Quando alguém marca pelo seu link público pessoal')}
         ${renderNotifToggle('notif_lembrete_diario', userPrefs.notif_lembrete_diario !== false, '☀️ Lembrete matinal pra avisar clientes', `Push de manhã (configurado pras ${userPrefs.lembrete_diario_hora || 9}h) lembrando dos clientes pra avisar`)}
         ${renderNotifToggle('notif_pacote_acabando', userPrefs.notif_pacote_acabando, '📦 Pacote do cliente acabando', 'Quando um cliente está no último corte do pacote')}
         ${renderNotifToggle('notif_pagamento_recebido', userPrefs.notif_pagamento_recebido, '💰 Pagamento confirmado', 'Quando o admin confirma o seu PIX mensal')}
@@ -4411,6 +4648,8 @@ async function renderAgendaDia() {
     const duracaoMin = Math.round((aFim - new Date(ag.inicio)) / 60000);
     const isFinalizado = ag.status === "FINALIZADO";
     const isCancelado = ag.status === "CANCELADO" || ag.status === "FALTOU";
+    const isConfirmado = ag.status === "CONFIRMADO";
+    const isAgendadoPendente = ag.status === "AGENDADO";  // novo: aguardando confirmação
 
     const pacotesCliente = pacotesPorCliente[ag.cliente_id] || [];
     const pacoteCobre = pacotesCliente.find(p =>
@@ -4419,6 +4658,25 @@ async function renderAgendaDia() {
     const temPacoteAtivo = pacotesCliente.length > 0;
     const opacityCls = isFinalizado ? 'opacity:0.55' : (isCancelado ? 'opacity:0.4' : '');
 
+    // Dados pra mensagem WhatsApp
+    const dataFormatada = formatDataWhats(ag.inicio);
+    const barbeariaNome = state.barbearia?.name || '';
+    const barbeiroNome = ag.barber_name || state.profile.barbershop_name || state.profile.name || '';
+
+    const whatsCtxConfirmar = {
+      clienteNome: ag.cliente?.nome || '',
+      dataFormatada,
+      horario: horarioStr,
+      servicoNome: ag.servico?.nome || 'seu atendimento',
+      barbeariaNome,
+      barbeiroNome: state.barbearia ? barbeiroNome : null,  // só mostra barbeiro se for barbearia
+    };
+    const whatsCtxLembrete = {
+      clienteNome: ag.cliente?.nome || '',
+      horario: horarioStr,
+      servicoNome: ag.servico?.nome || 'seu atendimento',
+    };
+
     return `
       <div class="appt-card ${isFinalizado ? 'done' : ''} ${isCancelado ? 'cancelled' : ''}" style="${opacityCls}">
         <div style="flex:1;min-width:0">
@@ -4426,6 +4684,8 @@ async function renderAgendaDia() {
             <div style="font-size:14px;font-weight:600">${escapeHtml(ag.cliente?.nome || "?")}</div>
             ${isFinalizado ? '<span class="pill pill-green" style="font-size:10px">Finalizado</span>' : ''}
             ${isCancelado ? `<span class="pill pill-red" style="font-size:10px">${ag.status}</span>` : ''}
+            ${isConfirmado ? '<span class="pill pill-green" style="font-size:10px">✓ Confirmado</span>' : ''}
+            ${isAgendadoPendente ? '<span class="pill pill-soft" style="font-size:10px;color:#ffb73e;border-color:rgba(255,183,62,0.3);background:rgba(255,183,62,0.1)">⏳ A confirmar</span>' : ''}
             ${pacoteCobre && !isFinalizado && !isCancelado ? `
               <span class="pill pill-gold" style="font-size:10px">
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
@@ -4443,10 +4703,26 @@ async function renderAgendaDia() {
           </div>
         </div>
         ${!isFinalizado && !isCancelado ? `
-          <div style="display:flex;gap:4px">
-            <a href="${bf.whatsappLink(ag.cliente?.telefone, `Oi ${ag.cliente?.nome?.split(' ')[0] || ''}, lembrando do seu horário às ${horarioStr}!`)}" target="_blank" class="icon-btn" style="width:30px;height:30px" title="WhatsApp" onclick="event.stopPropagation()">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
-            </a>
+          <div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end">
+            ${isAgendadoPendente ? `
+              <a href="${buildWhatsLink(ag.cliente?.telefone, 'confirmacao', whatsCtxConfirmar)}" 
+                 target="_blank" 
+                 class="btn btn-primary btn-sm" 
+                 style="padding:6px 10px;font-size:11px" 
+                 onclick="event.stopPropagation();marcarComoConfirmado('${ag.id}')"
+                 title="Manda mensagem de confirmação no WhatsApp">
+                📲 Confirmar
+              </a>
+            ` : `
+              <a href="${buildWhatsLink(ag.cliente?.telefone, 'lembreteHoje', whatsCtxLembrete)}" 
+                 target="_blank" 
+                 class="icon-btn" 
+                 style="width:30px;height:30px" 
+                 title="Lembrar via WhatsApp" 
+                 onclick="event.stopPropagation()">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+              </a>
+            `}
             <button class="btn btn-ghost btn-sm" style="padding:6px 10px;font-size:11px" onclick='event.stopPropagation();openAgendamentoModal(${escapeJsonForAttr(ag)})'>Editar</button>
             <button class="btn btn-success btn-sm" style="padding:6px 10px;font-size:11px" onclick='event.stopPropagation();openFinalizarModal(${escapeJsonForAttr({ ...ag, _temPacote: temPacoteAtivo })})'>✓ Finalizar</button>
           </div>
@@ -5350,3 +5626,6 @@ window.renderRelatorios = renderRelatorios;
 window.setRelatorioPeriodo = setRelatorioPeriodo;
 window.setRelatorioTab = setRelatorioTab;
 window.exportarFolha = exportarFolha;
+// WhatsApp & Confirmações
+window.marcarComoConfirmado = marcarComoConfirmado;
+window.buildWhatsLink = buildWhatsLink;
