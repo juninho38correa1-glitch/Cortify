@@ -1287,20 +1287,33 @@ async function renderRelatorioFinanceiro() {
   }
   const { year, month } = window._finView;
 
+  // Helper: chama RPC com fallback em caso de erro
+  const safeRpc = async (fn, args = {}, fallback = null) => {
+    try {
+      const res = await sb.rpc(fn, args);
+      if (res.error) {
+        console.error(`${fn} falhou:`, res.error);
+        return { data: fallback, error: res.error };
+      }
+      return res;
+    } catch (err) {
+      console.error(`${fn} throw:`, err);
+      return { data: fallback, error: err };
+    }
+  };
+
   // Carrega tudo em paralelo, com proteção contra erros individuais
   const [summaryRes, despesasRes, commissionsRes, rankingRes] = await Promise.all([
-    sb.rpc('financial_summary_month', { p_year: year, p_month: month })
-      .catch(err => { console.error('financial_summary_month falhou:', err); return { data: null, error: err }; }),
-    sb.rpc('list_despesas_month', { p_year: year, p_month: month })
-      .catch(err => { console.error('list_despesas_month falhou:', err); return { data: [], error: err }; }),
-    sb.rpc('calc_pending_commissions')
-      .catch(err => { console.error('calc_pending_commissions falhou:', err); return { data: [], error: err }; }),
-    state.barbearia ? sb.rpc('get_barber_ranking', {
-      p_barbershop_id: state.barbearia.id,
-      p_start_date: new Date(year, month - 1, 1).toISOString(),
-      p_end_date: new Date(year, month, 1).toISOString(),
-    }).catch(err => { console.error('get_barber_ranking falhou:', err); return { data: [], error: err }; })
-     : Promise.resolve({ data: [] }),
+    safeRpc('financial_summary_month', { p_year: year, p_month: month }, null),
+    safeRpc('list_despesas_month', { p_year: year, p_month: month }, []),
+    safeRpc('calc_pending_commissions', {}, []),
+    state.barbearia 
+      ? safeRpc('get_barber_ranking', {
+          p_barbershop_id: state.barbearia.id,
+          p_start_date: new Date(year, month - 1, 1).toISOString(),
+          p_end_date: new Date(year, month, 1).toISOString(),
+        }, [])
+      : Promise.resolve({ data: [] }),
   ]);
 
   // Se a função principal falhou, mostra erro claro
