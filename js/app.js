@@ -199,16 +199,22 @@ async function loadUserSubscription() {
   // Tenta usar a view (com plano)
   const { data: sub } = await sb
     .from('subscriptions')
-    .select('id, plan_id, plan_version_id, status, amount, billing_cycle, current_period_end, trial_ends_at')
+    .select('id, plan_id, plan_version_id, plan_type, status, amount, billing_cycle, current_period_end, trial_ends_at, seats')
     .eq('user_id', state.user.id)
     .maybeSingle();
 
   state.subscription = sub;
 
-  // Busca plano atual visível pra mostrar o preço pra novos clientes
-  // Pega o autonomo-mensal como default (pra trial banner mostrar valor atual)
+  // ⭐ PRIORIDADE 1: usa o amount real da subscription (que já considera barbearia + addons)
+  if (sub && sub.amount) {
+    state.currentPlanPrice = Number(sub.amount);
+    state.currentPlanCycle = sub.billing_cycle || 'MONTHLY';
+    state.currentPlanType = sub.plan_type;
+    return;
+  }
+
+  // PRIORIDADE 2: cliente já tem subscription mas sem amount — pega da plan_version
   if (sub && sub.plan_version_id) {
-    // Cliente já tem subscription — pega a versão dele (preço congelado)
     const { data: planVersion } = await sb
       .from('plan_versions')
       .select('price, billing_cycle, trial_days')
@@ -219,7 +225,7 @@ async function loadUserSubscription() {
       state.currentPlanCycle = planVersion.billing_cycle;
     }
   } else {
-    // Sem subscription — busca preço VIGENTE do plano mensal autônomo (pra trial banner)
+    // PRIORIDADE 3: sem subscription — busca preço VIGENTE do plano mensal autônomo
     const { data: defaultPlan } = await sb
       .from('plans')
       .select('current_version_id')
@@ -1592,7 +1598,7 @@ function openDespesaModal() {
 function createDespesaModal() {
   const div = document.createElement('div');
   div.id = 'despesaModal';
-  div.className = 'modal';
+  div.className = 'modal-overlay';
   div.innerHTML = `
     <div class="modal-content" style="max-width:480px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
@@ -1719,7 +1725,7 @@ function openPayCommissionModal(commissionData) {
 function createPayCommissionModal() {
   const div = document.createElement('div');
   div.id = 'payCommissionModal';
-  div.className = 'modal';
+  div.className = 'modal-overlay';
   div.innerHTML = `
     <div class="modal-content" style="max-width:480px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
@@ -1813,7 +1819,7 @@ async function openBarberDetailModal(barberUserId, year, month) {
   if (!modal) {
     modal = document.createElement('div');
     modal.id = 'barberDetailModal';
-    modal.className = 'modal';
+    modal.className = 'modal-overlay';
     document.body.appendChild(modal);
   }
 
@@ -5527,7 +5533,11 @@ function renderContaPrincipal() {
           </a>
         ` : isActive ? `
           <div style="font-family:'Playfair Display';font-size:36px;font-weight:700;color:var(--gold);line-height:1">${bf.formatBRL(currentPrice())}<span style="font-size:14px;color:var(--text-soft);font-weight:400">/mês</span></div>
-          <div style="font-size:12px;color:var(--text-soft);margin-top:6px">Plano Único · Cortify</div>
+          <div style="font-size:12px;color:var(--text-soft);margin-top:6px">
+            ${state.currentPlanType === 'BARBEARIA_MENSAL' ? '🏪 Plano Barbearia' 
+              : state.currentPlanType === 'AUTONOMO_MENSAL' ? '👤 Plano Autônomo'
+              : 'Plano Cortify'} · ${state.subscription?.seats > 1 ? state.subscription.seats + ' barbeiros' : 'Cortify'}
+          </div>
 
           <div style="margin-top:18px;padding-top:18px;border-top:1px solid var(--line);display:grid;gap:8px;font-size:12px">
             <div style="display:flex;justify-content:space-between;color:var(--text-soft)">
