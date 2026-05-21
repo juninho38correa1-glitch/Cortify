@@ -4563,10 +4563,37 @@ function renderContaPrincipal() {
       <div class="${isTrial ? "card-gold" : "card-gradient"}">
         <div class="block-h">
           <h3>Plano</h3>
-          ${isTrial ? '<span class="pill pill-gold">TRIAL</span>' : isActive ? '<span class="pill pill-green">ATIVO</span>' : '<span class="pill pill-red">EXPIRADO</span>'}
+          ${paidByBarbershop ? '<span class="pill pill-green">PAGO PELA BARBEARIA</span>' : isTrial ? '<span class="pill pill-gold">TRIAL</span>' : isActive ? '<span class="pill pill-green">ATIVO</span>' : '<span class="pill pill-red">EXPIRADO</span>'}
         </div>
 
-        ${isTrial ? `
+        ${paidByBarbershop ? `
+          <div style="text-align:center;padding:14px 0 8px">
+            <div style="font-size:48px;line-height:1">🏪</div>
+            <div style="font-family:'Playfair Display';font-size:22px;font-weight:700;margin-top:8px">${escapeHtml(state.accessInfo?.barbershop_name || 'Sua barbearia')}</div>
+            <div style="font-size:12px;color:var(--text-soft);margin-top:4px">
+              ${state.accessInfo?.reason === 'GRACE_PERIOD' 
+                ? '⚠️ Pagamento atrasado · ' + (state.accessInfo.days_left_grace || 0) + 'd de graça' 
+                : '✅ Acesso liberado pela equipe'}
+            </div>
+          </div>
+          <div style="margin-top:18px;padding-top:18px;border-top:1px solid var(--line);display:grid;gap:8px;font-size:12px">
+            <div style="display:flex;justify-content:space-between;color:var(--text-soft)">
+              <span>Sua função:</span>
+              <strong style="color:var(--text)">${roleLabel(state.accessInfo?.role)}</strong>
+            </div>
+            <div style="display:flex;justify-content:space-between;color:var(--text-soft)">
+              <span>Você paga:</span>
+              <strong style="color:var(--green)">R$ 0,00</strong>
+            </div>
+            <div style="display:flex;justify-content:space-between;color:var(--text-soft)">
+              <span>Status:</span>
+              <strong style="color:var(--green)">${state.accessInfo?.owner_status === 'ACTIVE' ? '✅ Em dia' : (state.accessInfo?.owner_status === 'TRIAL' ? '🎁 Trial' : '⚠️ Atenção')}</strong>
+            </div>
+          </div>
+          <div style="margin-top:14px;padding:12px;background:var(--bg-soft);border-radius:8px;font-size:11px;color:var(--text-dim);line-height:1.5">
+            ℹ️ A mensalidade do sistema é paga pelo dono da barbearia. Você usa o Cortify gratuitamente enquanto for membro ativo.
+          </div>
+        ` : isTrial ? `
           <div style="font-family:'Playfair Display';font-size:36px;font-weight:700;color:var(--gold);line-height:1">${days} ${days === 1 ? "dia" : "dias"}</div>
           <div style="font-size:12px;color:var(--text-soft);margin-top:6px">restantes do seu trial grátis</div>
 
@@ -4626,6 +4653,7 @@ function renderContaPrincipal() {
       </div>
     </div>
 
+    ${paidByBarbershop ? '' : `
     <!-- Histórico de pagamentos -->
     <div class="card" style="margin-bottom:20px">
       <div class="block-h"><h3>Histórico de pagamentos</h3></div>
@@ -4633,6 +4661,7 @@ function renderContaPrincipal() {
         <div style="text-align:center;color:var(--text-soft);padding:20px;font-size:13px">Carregando...</div>
       </div>
     </div>
+    `}
 
     <!-- Logout (importante no mobile) -->
     <div style="margin-top:18px;text-align:center">
@@ -4643,8 +4672,10 @@ function renderContaPrincipal() {
     </div>
   `;
 
-  // Carrega histórico de pagamentos async
-  loadPaymentHistory();
+  // Carrega histórico de pagamentos async (só não-membros têm pagamentos próprios)
+  if (state.accessInfo?.reason !== 'PAID_BY_BARBERSHOP' && state.accessInfo?.reason !== 'GRACE_PERIOD') {
+    loadPaymentHistory();
+  }
 }
 
 async function loadPaymentHistory() {
