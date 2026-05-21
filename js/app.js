@@ -1535,16 +1535,23 @@ async function renderRelatorioFinanceiro() {
       <div class="card" style="margin-bottom:20px">
         <div class="block-h">
           <h3>📊 Folha de pagamento · ${periodo}</h3>
-          <button class="btn btn-ghost btn-sm" onclick="exportarFolha()">📋 Copiar</button>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-ghost btn-sm" onclick="exportarFolha()">📋 Copiar</button>
+            <button class="btn btn-ghost btn-sm" onclick="exportarFolhaPDF()">📄 PDF</button>
+          </div>
         </div>
         ${ranking.filter(r => r.role !== 'OWNER').length === 0 ? `
           <p style="color:var(--text-dim);text-align:center;padding:30px">Nenhum barbeiro com comissão configurada</p>
         ` : `
           <div class="payroll-table">
             ${ranking.filter(r => r.role !== 'OWNER').map(r => `
-              <div class="payroll-row">
+              <div class="payroll-row" style="cursor:pointer;transition:background 0.15s" 
+                   onmouseover="this.style.background='var(--bg-soft)'" 
+                   onmouseout="this.style.background='transparent'"
+                   onclick="openBarberDetailModal('${r.user_id}', ${year}, ${month})"
+                   title="Clique pra ver detalhamento">
                 <div class="payroll-name">
-                  <div style="font-size:14px;font-weight:600">${escapeHtml(r.barber_name)}</div>
+                  <div style="font-size:14px;font-weight:600">${escapeHtml(r.barber_name)} <span style="font-size:11px;color:var(--gold);font-weight:400">📊 ver detalhes</span></div>
                   <div style="font-size:11px;color:var(--text-dim)">${roleLabel(r.role)} · ${commissionLabel(r)}</div>
                 </div>
                 <div class="payroll-details">
@@ -1673,6 +1680,16 @@ async function confirmarDespesa(e) {
 }
 
 async function excluirDespesa(id) {
+  // Busca a despesa pra ver se é comissão
+  const { data: despesa } = await sb.from('despesas').select('categoria').eq('id', id).maybeSingle();
+  
+  if (despesa?.categoria === 'COMISSAO') {
+    // É comissão: oferece REVERTER ao invés de só apagar
+    if (!confirm('🔄 Essa é uma despesa de COMISSÃO PAGA.\n\nAo excluir, os atendimentos vinculados voltam pra "pendente de pagamento", permitindo registrar de novo se precisar.\n\nReverter este pagamento?')) return;
+    return reverterPagamentoComissao(id);
+  }
+  
+  // Despesa normal: apaga direto
   if (!confirm('Excluir essa despesa?')) return;
   const { error } = await sb.from('despesas').delete().eq('id', id);
   if (error) {
@@ -1787,6 +1804,252 @@ async function confirmarPagamentoComissao(e) {
   renderRelatorioFinanceiro();
 }
 
+// ============================================
+// MODAL: DETALHAMENTO POR BARBEIRO
+// ============================================
+async function openBarberDetailModal(barberUserId, year, month) {
+  // Cria modal se não existir
+  let modal = document.getElementById('barberDetailModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'barberDetailModal';
+    modal.className = 'modal';
+    document.body.appendChild(modal);
+  }
+
+  modal.innerHTML = `
+    <div class="modal-content" style="max-width:780px;max-height:90vh;overflow-y:auto">
+      <div style="text-align:center;padding:40px;color:var(--text-soft)">
+        <div style="display:inline-block;width:24px;height:24px;border:2px solid var(--gold);border-top-color:transparent;border-radius:50%;animation:spin 1s linear infinite"></div>
+        <div style="margin-top:14px">Carregando detalhamento...</div>
+      </div>
+    </div>
+  `;
+  modal.classList.add('open');
+
+  // Busca dados
+  const { data, error } = await sb.rpc('get_barber_month_detail', {
+    p_barber_user_id: barberUserId,
+    p_year: year,
+    p_month: month,
+  });
+
+  if (error || data?.error) {
+    modal.querySelector('.modal-content').innerHTML = `
+      <div style="text-align:center;padding:40px">
+        <div style="font-size:32px;margin-bottom:10px">⚠️</div>
+        <strong>Erro ao carregar detalhamento</strong>
+        <p style="color:var(--text-soft);font-size:13px;margin-top:8px">${escapeHtml(error?.message || data?.error)}</p>
+        <button class="btn btn-ghost btn-sm" onclick="closeModal('barberDetailModal')" style="margin-top:14px">Fechar</button>
+      </div>
+    `;
+    return;
+  }
+
+  const { barbeiro, periodo, resumo, atendimentos } = data;
+  const isPercentModel = barbeiro.commission_model === 'PERCENT';
+  const isRentModel = barbeiro.commission_model === 'RENT';
+
+  const fmtDate = (dt) => new Date(dt).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+  const fmtTime = (dt) => new Date(dt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+
+  // Modelo do contrato visual
+  const modelLabels = {
+    'PERCENT': `Comissão de ${barbeiro.commission_percent}%`,
+    'RENT': 'Aluguel fixo (paga pra usar o espaço)',
+    'SALARY': 'Salário fixo',
+    'MIXED': `Salário + ${barbeiro.commission_percent}% de comissão`,
+    'NONE': 'Sem comissão definida',
+  };
+
+  modal.querySelector('.modal-content').innerHTML = `
+    <!-- Header -->
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:10px">
+      <div>
+        <div style="font-size:11px;color:var(--text-dim);letter-spacing:1.5px;text-transform:uppercase;font-weight:600;margin-bottom:4px">Detalhamento do mês</div>
+        <h2 style="font-family:'Playfair Display';font-size:24px;font-weight:700">${escapeHtml(barbeiro.display_name)}</h2>
+        <div style="font-size:13px;color:var(--text-soft);margin-top:2px">
+          ${modelLabels[barbeiro.commission_model] || barbeiro.commission_model} · ${periodo}
+        </div>
+      </div>
+      <button onclick="closeModal('barberDetailModal')" style="background:none;border:none;color:var(--text-dim);font-size:28px;cursor:pointer;line-height:1">×</button>
+    </div>
+
+    ${isRentModel ? `
+      <div class="card" style="margin-bottom:18px;background:rgba(111,207,151,0.06);border-color:rgba(111,207,151,0.25);text-align:center;padding:30px">
+        <div style="font-size:36px;margin-bottom:8px">🏠</div>
+        <h3 style="margin-bottom:6px">${escapeHtml(barbeiro.display_name)} paga aluguel</h3>
+        <p style="font-size:13px;color:var(--text-soft)">Esse barbeiro trabalha em modelo de aluguel/diária. Você NÃO paga comissão pra ele.<br>O faturamento dele é dele, mas mesmo assim você vê os atendimentos abaixo pra acompanhamento.</p>
+      </div>
+    ` : ''}
+
+    <!-- KPIs do barbeiro -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:10px;margin-bottom:18px">
+      <div class="stat-card gold" style="padding:14px">
+        <div class="stat-label" style="font-size:10px">Faturamento</div>
+        <div class="stat-num" style="font-size:22px">${bf.formatBRL(resumo.faturamento_bruto)}</div>
+        <div class="stat-foot">${resumo.atendimentos} atend.</div>
+      </div>
+      ${!isRentModel ? `
+        <div class="stat-card" style="border-color:var(--gold);padding:14px">
+          <div class="stat-label" style="font-size:10px">Comissão total</div>
+          <div class="stat-num" style="font-size:22px;color:var(--gold)">${bf.formatBRL(resumo.comissao_total)}</div>
+          ${isPercentModel ? `<div class="stat-foot">${barbeiro.commission_percent}%</div>` : ''}
+        </div>
+      ` : ''}
+      ${resumo.comissao_pendente > 0 ? `
+        <div class="stat-card" style="border-color:#ffb73e;padding:14px">
+          <div class="stat-label" style="font-size:10px">Pendente</div>
+          <div class="stat-num" style="font-size:22px;color:#ffb73e">${bf.formatBRL(resumo.comissao_pendente)}</div>
+          <div class="stat-foot">a pagar</div>
+        </div>
+      ` : ''}
+      ${resumo.comissao_paga > 0 ? `
+        <div class="stat-card" style="border-color:var(--green);padding:14px">
+          <div class="stat-label" style="font-size:10px">Já pago</div>
+          <div class="stat-num" style="font-size:22px;color:var(--green)">${bf.formatBRL(resumo.comissao_paga)}</div>
+          <div class="stat-foot">quitado</div>
+        </div>
+      ` : ''}
+      <div class="stat-card" style="padding:14px">
+        <div class="stat-label" style="font-size:10px">Clientes únicos</div>
+        <div class="stat-num" style="font-size:22px">${resumo.clientes_unicos}</div>
+        <div class="stat-foot">${resumo.servicos_diferentes} serviços</div>
+      </div>
+      <div class="stat-card" style="padding:14px">
+        <div class="stat-label" style="font-size:10px">Ticket médio</div>
+        <div class="stat-num" style="font-size:22px">${bf.formatBRL(resumo.ticket_medio)}</div>
+      </div>
+    </div>
+
+    <!-- Tabela de atendimentos -->
+    ${atendimentos.length === 0 ? `
+      <div class="card" style="text-align:center;padding:40px;color:var(--text-dim)">
+        Nenhum atendimento esse mês.
+      </div>
+    ` : `
+      <div class="card" style="margin-bottom:14px">
+        <div class="block-h">
+          <h3>📋 Atendimentos · ${atendimentos.length} no total</h3>
+        </div>
+        <div style="display:grid;gap:6px;max-height:50vh;overflow-y:auto">
+          ${atendimentos.map(a => `
+            <div style="display:grid;grid-template-columns:80px 1fr 80px ${isPercentModel ? '90px 30px' : ''};gap:10px;align-items:center;padding:10px 12px;background:var(--bg-soft);border-radius:8px;border-left:3px solid ${a.comissao_paga ? 'var(--green)' : '#ffb73e'}">
+              <div>
+                <div style="font-size:12px;font-weight:600">${fmtDate(a.data)}</div>
+                <div style="font-size:10px;color:var(--text-dim)">${fmtTime(a.data)}</div>
+              </div>
+              <div style="min-width:0;overflow:hidden">
+                <div style="font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(a.cliente_nome || 'Cliente')}</div>
+                <div style="font-size:11px;color:var(--text-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+                  ${escapeHtml(a.servico_nome)}
+                  ${a.pago_via_pacote ? ' · 📦 pacote' : (a.forma_pagamento ? ' · ' + a.forma_pagamento : '')}
+                </div>
+              </div>
+              <div style="text-align:right">
+                <div style="font-size:13px;font-weight:600">${bf.formatBRL(a.valor_servico)}</div>
+              </div>
+              ${isPercentModel ? `
+                <div style="text-align:right">
+                  <div style="font-size:13px;font-weight:700;color:var(--gold)">${bf.formatBRL(a.comissao_valor)}</div>
+                </div>
+                <div style="text-align:center" title="${a.comissao_paga ? 'Comissão paga' : 'Pendente'}">
+                  ${a.comissao_paga 
+                    ? '<span style="color:var(--green);font-size:14px">✓</span>' 
+                    : '<span style="color:#ffb73e;font-size:14px">⏳</span>'}
+                </div>
+              ` : ''}
+            </div>
+          `).join('')}
+        </div>
+        ${isPercentModel ? `
+          <div style="display:flex;justify-content:flex-end;gap:14px;margin-top:14px;padding-top:14px;border-top:1px solid var(--line);font-weight:600">
+            <span style="color:var(--text-soft);font-size:13px">Total comissão do mês:</span>
+            <span style="color:var(--gold);font-family:'Playfair Display';font-size:18px">${bf.formatBRL(resumo.comissao_total)}</span>
+          </div>
+        ` : ''}
+      </div>
+    `}
+
+    <!-- Ações -->
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <button class="btn btn-ghost" onclick="closeModal('barberDetailModal')" style="flex:1">Fechar</button>
+      ${isPercentModel && resumo.comissao_pendente > 0 ? `
+        <button class="btn btn-ghost" onclick="copiarDetalhamento('${barbeiro.user_id}', ${year}, ${month})" style="flex:1">📋 Copiar resumo</button>
+        <button class="btn btn-primary" onclick="closeModal('barberDetailModal'); openPayCommissionFromDetail('${barbeiro.user_id}')" style="flex:2">
+          💰 Pagar ${bf.formatBRL(resumo.comissao_pendente)}
+        </button>
+      ` : isPercentModel ? `
+        <button class="btn btn-ghost" onclick="copiarDetalhamento('${barbeiro.user_id}', ${year}, ${month})" style="flex:1">📋 Copiar resumo</button>
+      ` : ''}
+    </div>
+  `;
+}
+
+// Atalho: abre modal de pagamento da lista de pendentes
+function openPayCommissionFromDetail(barberUserId) {
+  const pending = window._pendingCommissions || {};
+  for (const idx in pending) {
+    if (pending[idx].user_id === barberUserId) {
+      openPayCommissionModal(pending[idx]);
+      return;
+    }
+  }
+  bf.toast('Comissão já paga ou não encontrada', 'info');
+}
+
+// Copia resumo formatado pra WhatsApp/clipboard
+async function copiarDetalhamento(barberUserId, year, month) {
+  const { data, error } = await sb.rpc('get_barber_month_detail', {
+    p_barber_user_id: barberUserId,
+    p_year: year,
+    p_month: month,
+  });
+  if (error || !data) {
+    bf.toast('Erro ao buscar detalhamento', 'error');
+    return;
+  }
+
+  const { barbeiro, periodo, resumo, atendimentos } = data;
+  const fmtDate = (dt) => new Date(dt).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+  
+  const linhas = [
+    `*Folha de pagamento - ${barbeiro.display_name}*`,
+    `📅 ${periodo}`,
+    `📊 ${barbeiro.commission_percent}% de comissão`,
+    '',
+    '---',
+  ];
+  
+  (atendimentos || []).forEach(a => {
+    linhas.push(`${fmtDate(a.data)} · ${a.cliente_nome} · ${a.servico_nome}`);
+    linhas.push(`  ${bf.formatBRL(a.valor_servico)} → ${bf.formatBRL(a.comissao_valor)} ${a.comissao_paga ? '✓' : '⏳'}`);
+  });
+  
+  linhas.push('---');
+  linhas.push(`Atendimentos: ${resumo.atendimentos}`);
+  linhas.push(`Faturamento: ${bf.formatBRL(resumo.faturamento_bruto)}`);
+  linhas.push(`*Comissão total: ${bf.formatBRL(resumo.comissao_total)}*`);
+  if (resumo.comissao_paga > 0) linhas.push(`Já pago: ${bf.formatBRL(resumo.comissao_paga)}`);
+  if (resumo.comissao_pendente > 0) linhas.push(`*Pendente: ${bf.formatBRL(resumo.comissao_pendente)}*`);
+
+  const texto = linhas.join('\n');
+  
+  try {
+    await navigator.clipboard.writeText(texto);
+    bf.toast('✓ Detalhamento copiado!', 'success');
+  } catch (e) {
+    // Fallback
+    const ta = document.createElement('textarea');
+    ta.value = texto;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    bf.toast('✓ Copiado', 'success');
+  }
+}
+
 // Exportar folha (copia texto pra área de transferência)
 async function exportarFolha() {
   const range = getRelatorioRange();
@@ -1821,6 +2084,222 @@ async function exportarFolha() {
   } catch (e) {
     prompt('Copie a folha:', texto);
   }
+}
+
+
+// ============================================
+// EXPORTAR FOLHA EM PDF (via window.print)
+// ============================================
+async function exportarFolhaPDF() {
+  const hoje = new Date();
+  const year = window._finView?.year || hoje.getFullYear();
+  const month = window._finView?.month || (hoje.getMonth() + 1);
+  const startDate = new Date(year, month - 1, 1).toISOString();
+  const endDate = new Date(year, month, 1).toISOString();
+  
+  const { data: ranking } = await sb.rpc('get_barber_ranking', {
+    p_barbershop_id: state.barbearia.id,
+    p_start_date: startDate,
+    p_end_date: endDate,
+  });
+  
+  const filtered = (ranking || []).filter(r => r.role !== 'OWNER');
+  if (filtered.length === 0) {
+    bf.toast('Nenhum barbeiro pra exportar', 'info');
+    return;
+  }
+  
+  // Busca detalhamento de cada barbeiro PERCENT
+  const details = await Promise.all(
+    filtered.map(async r => {
+      if (r.commission_model !== 'PERCENT') return { barber: r, detail: null };
+      const { data } = await sb.rpc('get_barber_month_detail', {
+        p_barber_user_id: r.user_id,
+        p_year: year,
+        p_month: month,
+      });
+      return { barber: r, detail: data };
+    })
+  );
+  
+  const periodo = new Date(year, month - 1, 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+  const fmtBRL = (n) => 'R$ ' + Number(n || 0).toFixed(2).replace('.', ',');
+  const fmtDate = (dt) => new Date(dt).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+  
+  // Abre janela com HTML pronto pra imprimir/PDF
+  const w = window.open('', '_blank', 'width=900,height=900');
+  if (!w) {
+    bf.toast('⚠️ Permita popups pra gerar o PDF', 'error');
+    return;
+  }
+  
+  let totalGeral = 0;
+  
+  const html = `
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Folha de Pagamento - ${escapeHtml(state.barbearia.name)} - ${periodo}</title>
+  <style>
+    @page { margin: 1.5cm; size: A4; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; color: #1a1a1a; line-height: 1.5; }
+    .header { border-bottom: 3px solid #d4a857; padding-bottom: 14px; margin-bottom: 24px; }
+    .header h1 { font-size: 26px; color: #1a1a1a; margin-bottom: 4px; }
+    .header .subtitle { color: #666; font-size: 13px; }
+    .header .date { color: #d4a857; font-weight: 600; text-transform: capitalize; }
+    h2 { font-size: 18px; margin: 20px 0 10px; color: #d4a857; border-bottom: 1px solid #e0e0e0; padding-bottom: 6px; }
+    .barber-card { margin-bottom: 28px; page-break-inside: avoid; }
+    .barber-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+    .barber-name { font-size: 16px; font-weight: 700; }
+    .barber-info { color: #666; font-size: 12px; }
+    .barber-total { font-size: 22px; font-weight: 700; color: #d4a857; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 11px; }
+    th { background: #f5f5f5; text-align: left; padding: 6px 8px; font-weight: 600; border-bottom: 2px solid #ddd; }
+    td { padding: 5px 8px; border-bottom: 1px solid #eee; }
+    .text-right { text-align: right; }
+    .text-center { text-align: center; }
+    .paid { color: #6fcf97; }
+    .pending { color: #ffb73e; }
+    .commission { color: #d4a857; font-weight: 600; }
+    .totals { margin-top: 30px; padding-top: 16px; border-top: 3px double #d4a857; display: flex; justify-content: flex-end; align-items: baseline; gap: 16px; }
+    .totals .label { font-size: 14px; color: #666; }
+    .totals .value { font-size: 28px; font-weight: 700; color: #d4a857; }
+    .footer { margin-top: 40px; padding-top: 14px; border-top: 1px solid #ddd; font-size: 10px; color: #999; text-align: center; }
+    .rent-row { background: #f5f5f5; padding: 10px; border-radius: 6px; font-style: italic; color: #666; }
+    @media print {
+      .no-print { display: none; }
+    }
+    .print-btn { position: fixed; bottom: 20px; right: 20px; padding: 14px 24px; background: #d4a857; color: white; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+  </style>
+</head>
+<body>
+  <button class="print-btn no-print" onclick="window.print()">🖨️ Imprimir / Salvar PDF</button>
+  
+  <div class="header">
+    <h1>📊 Folha de Pagamento</h1>
+    <div class="subtitle">${escapeHtml(state.barbearia.name)}</div>
+    <div class="date">${periodo}</div>
+  </div>
+
+  ${details.map(({ barber, detail }) => {
+    if (barber.commission_model === 'RENT') {
+      return `
+        <div class="barber-card">
+          <div class="barber-header">
+            <div>
+              <div class="barber-name">${escapeHtml(barber.barber_name)}</div>
+              <div class="barber-info">Modelo: Aluguel (paga pra usar o espaço)</div>
+            </div>
+          </div>
+          <div class="rent-row">
+            ${barber.atendimentos} atendimentos · ${fmtBRL(barber.faturamento)} faturamento (não há comissão a pagar)
+          </div>
+        </div>
+      `;
+    }
+    
+    if (!detail || !detail.atendimentos) return '';
+    
+    const subtotal = Number(detail.resumo.comissao_total || 0);
+    totalGeral += subtotal;
+    
+    return `
+      <div class="barber-card">
+        <div class="barber-header">
+          <div>
+            <div class="barber-name">${escapeHtml(barber.barber_name)}</div>
+            <div class="barber-info">
+              ${detail.resumo.atendimentos} atendimento(s) · 
+              Comissão ${barber.commission_percent}% · 
+              ${detail.resumo.clientes_unicos} cliente(s)
+            </div>
+          </div>
+          <div class="barber-total">${fmtBRL(subtotal)}</div>
+        </div>
+        
+        ${detail.atendimentos.length === 0 ? `
+          <div style="padding:14px;color:#999;font-style:italic">Sem atendimentos no período</div>
+        ` : `
+          <table>
+            <thead>
+              <tr>
+                <th style="width:60px">Data</th>
+                <th>Cliente</th>
+                <th>Serviço</th>
+                <th>Pagto</th>
+                <th class="text-right" style="width:80px">Valor</th>
+                <th class="text-right" style="width:80px">Comissão</th>
+                <th class="text-center" style="width:50px">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${detail.atendimentos.map(a => `
+                <tr>
+                  <td>${fmtDate(a.data)}</td>
+                  <td>${escapeHtml(a.cliente_nome)}</td>
+                  <td>${escapeHtml(a.servico_nome)}</td>
+                  <td>${a.pago_via_pacote ? '📦 pacote' : (a.forma_pagamento || '—')}</td>
+                  <td class="text-right">${fmtBRL(a.valor_servico)}</td>
+                  <td class="text-right commission">${fmtBRL(a.comissao_valor)}</td>
+                  <td class="text-center ${a.comissao_paga ? 'paid' : 'pending'}">
+                    ${a.comissao_paga ? '✓ pago' : '⏳ pend'}
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `}
+      </div>
+    `;
+  }).join('')}
+  
+  <div class="totals">
+    <span class="label">Total a pagar:</span>
+    <span class="value">${fmtBRL(totalGeral)}</span>
+  </div>
+  
+  <div class="footer">
+    Documento gerado em ${new Date().toLocaleString('pt-BR')} · Cortify
+  </div>
+</body>
+</html>
+  `;
+  
+  w.document.write(html);
+  w.document.close();
+  
+  // Aguarda render e abre dialog de print
+  setTimeout(() => {
+    try { w.focus(); } catch(e){}
+  }, 300);
+}
+
+
+// ============================================
+// REVERTER PAGAMENTO DE COMISSÃO
+// (caso o dono tenha errado)
+// ============================================
+async function reverterPagamentoComissao(despesaId) {
+  if (!confirm('⚠️ Reverter este pagamento de comissão?\n\nIsso vai:\n• Apagar essa despesa\n• Voltar os atendimentos pra "pendente"\n\nUse só se você errou o pagamento.')) {
+    return;
+  }
+
+  const { data, error } = await sb.rpc('reverse_commission_payment', {
+    p_despesa_id: despesaId,
+  });
+
+  if (error || data?.error) {
+    bf.toast('Erro: ' + (error?.message || data?.error), 'error');
+    return;
+  }
+
+  bf.toast(`✓ Pagamento revertido. ${data.atendimentos_revertidos} atendimento(s) voltaram pra pendente.`, 'success');
+  
+  // Fecha modal se estiver aberto
+  closeModal('barberDetailModal');
+  renderRelatorioFinanceiro();
 }
 
 
@@ -6488,6 +6967,11 @@ window.confirmarPagamentoComissao = confirmarPagamentoComissao;
 window.setRelatorioPeriodo = setRelatorioPeriodo;
 window.setRelatorioTab = setRelatorioTab;
 window.exportarFolha = exportarFolha;
+window.exportarFolhaPDF = exportarFolhaPDF;
+window.openBarberDetailModal = openBarberDetailModal;
+window.openPayCommissionFromDetail = openPayCommissionFromDetail;
+window.copiarDetalhamento = copiarDetalhamento;
+window.reverterPagamentoComissao = reverterPagamentoComissao;
 // WhatsApp & Confirmações
 window.marcarComoConfirmado = marcarComoConfirmado;
 window.buildWhatsLink = buildWhatsLink;
