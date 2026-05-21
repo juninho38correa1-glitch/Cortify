@@ -1276,92 +1276,481 @@ async function renderRelatorioFinanceiro() {
   const container = document.getElementById('relatoriosContent');
   container.innerHTML = `<div style="padding:40px;text-align:center;color:var(--text-soft)">Carregando...</div>`;
 
-  const range = getRelatorioRange();
+  // Pega mês/ano atual pra resumo mensal completo
+  const hoje = new Date();
+  const currentYear = hoje.getFullYear();
+  const currentMonth = hoje.getMonth() + 1;
+  
+  // Estado da view (mês selecionado)
+  if (!window._finView) {
+    window._finView = { year: currentYear, month: currentMonth };
+  }
+  const { year, month } = window._finView;
 
-  const [metricsRes, rankingRes] = await Promise.all([
-    sb.rpc('get_barbershop_dashboard_metrics', {
+  // Carrega tudo em paralelo
+  const [summaryRes, despesasRes, commissionsRes, rankingRes] = await Promise.all([
+    sb.rpc('financial_summary_month', { p_year: year, p_month: month }),
+    sb.rpc('list_despesas_month', { p_year: year, p_month: month }),
+    sb.rpc('calc_pending_commissions').catch(() => ({ data: [] })),
+    state.barbearia ? sb.rpc('get_barber_ranking', {
       p_barbershop_id: state.barbearia.id,
-      p_start_date: range.inicio.toISOString(),
-      p_end_date: range.fim.toISOString(),
-    }),
-    sb.rpc('get_barber_ranking', {
-      p_barbershop_id: state.barbearia.id,
-      p_start_date: range.inicio.toISOString(),
-      p_end_date: range.fim.toISOString(),
-    }),
+      p_start_date: new Date(year, month - 1, 1).toISOString(),
+      p_end_date: new Date(year, month, 1).toISOString(),
+    }) : Promise.resolve({ data: [] }),
   ]);
 
-  const m = metricsRes.data || {};
+  const summary = summaryRes.data || {};
+  const despesas = despesasRes.data || [];
+  const pendingCommissions = commissionsRes.data || [];
   const ranking = rankingRes.data || [];
 
-  // Salários fixos (do mês inteiro)
-  const salariosFixos = ranking.filter(r => 
-    r.commission_model === 'SALARY' || r.commission_model === 'MIXED'
-  );
+  const receita = summary.receita || {};
+  const despesa = summary.despesa || {};
+  const lucroLiquido = summary.lucro_liquido || 0;
+  const margem = summary.margem_percent || 0;
+  const periodo = summary.periodo || '';
 
-  // Total folha = comissões + salários
-  const totalFolha = m.total_comissoes || 0;
+  // Labels traduzíveis das categorias
+  const catLabels = {
+    'ALUGUEL': '🏠 Aluguel',
+    'PRODUTOS': '🧴 Produtos',
+    'AGUA_LUZ': '💡 Água/Luz',
+    'INTERNET': '🌐 Internet',
+    'COMISSAO': '💼 Comissão',
+    'MARKETING': '📢 Marketing',
+    'EQUIPAMENTO': '✂️ Equipamento',
+    'IMPOSTO': '📑 Imposto',
+    'SALARIO': '👤 Salário',
+    'OUTRO': '📦 Outro',
+  };
+
+  // Mês anterior pra navegação
+  const monthsNav = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(currentYear, currentMonth - 1 - i, 1);
+    monthsNav.push({
+      year: d.getFullYear(),
+      month: d.getMonth() + 1,
+      label: d.toLocaleDateString('pt-BR', { month: 'short' }),
+      isActive: d.getFullYear() === year && (d.getMonth() + 1) === month,
+    });
+  }
 
   container.innerHTML = `
-    <!-- Resumo financeiro -->
+    <!-- Navegador de mês -->
+    <div style="display:flex;gap:6px;margin-bottom:20px;overflow-x:auto;padding-bottom:4px">
+      ${monthsNav.map(m => `
+        <button 
+          class="tab-btn ${m.isActive ? 'active' : ''}" 
+          onclick="navegarMes(${m.year}, ${m.month})"
+          style="flex-shrink:0;text-transform:capitalize">
+          ${m.label}/${String(m.year).slice(2)}
+        </button>
+      `).join('')}
+    </div>
+
+    <!-- KPIs principais -->
     <div class="stats-grid" style="margin-bottom:20px">
       <div class="stat-card gold">
-        <div class="stat-label">Faturamento bruto</div>
-        <div class="stat-num">${bf.formatBRL(m.faturamento_bruto || 0)}</div>
+        <div class="stat-label">Receita</div>
+        <div class="stat-num">${bf.formatBRL(receita.total || 0)}</div>
+        <div class="stat-foot">${summary.atendimentos || 0} atendimentos</div>
+      </div>
+      <div class="stat-card" style="border-color:var(--red)">
+        <div class="stat-label">Despesas</div>
+        <div class="stat-num" style="color:var(--red)">- ${bf.formatBRL(despesa.total || 0)}</div>
+        <div class="stat-foot">${despesas.length} lançamento${despesas.length !== 1 ? 's' : ''}</div>
+      </div>
+      <div class="stat-card" style="border-color:${lucroLiquido >= 0 ? 'var(--green)' : 'var(--red)'}">
+        <div class="stat-label">Lucro líquido</div>
+        <div class="stat-num" style="color:${lucroLiquido >= 0 ? 'var(--green)' : 'var(--red)'}">
+          ${bf.formatBRL(lucroLiquido)}
+        </div>
+        <div class="stat-foot">Margem ${margem}%</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">Total a pagar (folha)</div>
-        <div class="stat-num" style="color:var(--red)">- ${bf.formatBRL(totalFolha)}</div>
-        <div class="stat-foot">${ranking.filter(r => r.role !== 'OWNER').length} barbeiro${ranking.filter(r => r.role !== 'OWNER').length !== 1 ? 's' : ''}</div>
-      </div>
-      <div class="stat-card" style="border-color:var(--green)">
-        <div class="stat-label">Lucro líquido</div>
-        <div class="stat-num" style="color:${(m.lucro_liquido || 0) >= 0 ? 'var(--green)' : 'var(--red)'}">${bf.formatBRL(m.lucro_liquido || 0)}</div>
+        <div class="stat-label">Ticket médio</div>
+        <div class="stat-num">${bf.formatBRL(summary.ticket_medio || 0)}</div>
+        <div class="stat-foot">${summary.clientes_unicos || 0} clientes únicos</div>
       </div>
     </div>
 
-    <!-- Folha de pagamento detalhada -->
-    <div class="card" style="margin-bottom:20px">
-      <div class="block-h">
-        <h3>Folha de pagamento · ${range.label}</h3>
-        <button class="btn btn-ghost btn-sm" onclick="exportarFolha()">📋 Copiar</button>
-      </div>
-      ${ranking.filter(r => r.role !== 'OWNER').length === 0 ? `
-        <p style="color:var(--text-dim);text-align:center;padding:30px">Nenhum barbeiro com comissão configurada</p>
-      ` : `
-        <div class="payroll-table">
-          ${ranking.filter(r => r.role !== 'OWNER').map(r => `
-            <div class="payroll-row">
-              <div class="payroll-name">
-                <div style="font-size:14px;font-weight:600">${escapeHtml(r.barber_name)}</div>
-                <div style="font-size:11px;color:var(--text-dim)">${roleLabel(r.role)} · ${commissionLabel(r)}</div>
-              </div>
-              <div class="payroll-details">
-                ${r.commission_model === 'PERCENT' || r.commission_model === 'MIXED' ? `
-                  <div style="font-size:11px;color:var(--text-soft)">${bf.formatBRL(r.faturamento)} × ${r.commission_percent}% = <strong style="color:var(--gold)">${bf.formatBRL(r.comissao)}</strong></div>
-                ` : ''}
-                ${r.commission_model === 'SALARY' || r.commission_model === 'MIXED' ? `
-                  <div style="font-size:11px;color:var(--text-soft)">Salário fixo: <strong style="color:var(--gold)">${bf.formatBRL(0)}</strong> <em>(será adicionado)</em></div>
-                ` : ''}
-                ${r.commission_model === 'RENT' ? `
-                  <div style="font-size:11px;color:var(--text-soft)">Aluguel: <strong style="color:var(--green)">A RECEBER</strong></div>
-                ` : ''}
-              </div>
-              <div class="payroll-value">${r.commission_model === 'RENT' ? '—' : bf.formatBRL(r.comissao)}</div>
+    <!-- 2 colunas: Receita por forma + Despesas por categoria -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px" class="fin-grid">
+      <div class="card">
+        <div class="block-h">
+          <h3>💰 Receita por forma</h3>
+        </div>
+        <div style="display:grid;gap:10px">
+          ${[
+            { lbl: '💵 Dinheiro', val: receita.dinheiro, color: '#6fcf97' },
+            { lbl: '💳 Cartão', val: receita.cartao, color: '#56a0ff' },
+            { lbl: '📱 PIX', val: receita.pix, color: '#d4a857' },
+            { lbl: '📦 Pacote (pago antes)', val: receita.pacote, color: '#c084fc' },
+          ].map(item => `
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:var(--bg-soft);border-radius:8px;border-left:3px solid ${item.color}">
+              <span style="font-size:13px;color:var(--text-soft)">${item.lbl}</span>
+              <strong style="font-size:14px;color:var(--text)">${bf.formatBRL(item.val || 0)}</strong>
             </div>
           `).join('')}
-          <div class="payroll-total">
-            <div>Total a pagar</div>
-            <div style="color:var(--gold)">${bf.formatBRL(totalFolha)}</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="block-h">
+          <h3>📤 Despesas por categoria</h3>
+          <button class="btn btn-primary btn-sm" onclick="openDespesaModal()">+ Nova</button>
+        </div>
+        ${Object.keys(despesa.por_categoria || {}).length === 0 ? `
+          <div style="text-align:center;padding:30px;color:var(--text-dim);font-size:13px">
+            Nenhuma despesa cadastrada esse mês.<br>
+            <button class="btn btn-ghost btn-sm" onclick="openDespesaModal()" style="margin-top:10px">+ Lançar primeira despesa</button>
+          </div>
+        ` : `
+          <div style="display:grid;gap:8px">
+            ${Object.entries(despesa.por_categoria || {})
+              .sort((a, b) => Number(b[1]) - Number(a[1]))
+              .map(([cat, val]) => `
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:var(--bg-soft);border-radius:8px">
+                  <span style="font-size:13px;color:var(--text-soft)">${catLabels[cat] || cat}</span>
+                  <strong style="font-size:14px;color:var(--red)">- ${bf.formatBRL(val)}</strong>
+                </div>
+              `).join('')}
+          </div>
+        `}
+      </div>
+    </div>
+
+    <!-- Comissões pendentes (só se barbearia) -->
+    ${state.barbearia && pendingCommissions.length > 0 ? `
+      <div class="card" style="margin-bottom:20px;border-color:rgba(212,168,87,0.4)">
+        <div class="block-h">
+          <h3>💼 Comissões pendentes de pagamento</h3>
+          <span style="font-size:11px;color:var(--gold);background:rgba(212,168,87,0.15);padding:4px 10px;border-radius:12px;font-weight:600">
+            ${pendingCommissions.length} barbeiro${pendingCommissions.length !== 1 ? 's' : ''}
+          </span>
+        </div>
+        <div style="display:grid;gap:10px">
+          ${pendingCommissions.map(c => `
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:14px;background:var(--bg-soft);border-radius:8px;gap:14px;flex-wrap:wrap">
+              <div style="flex:1;min-width:180px">
+                <div style="font-weight:600;font-size:14px">${escapeHtml(c.display_name)}</div>
+                <div style="font-size:11px;color:var(--text-dim);margin-top:2px">
+                  ${c.atendimentos_count} atend. · ${bf.formatBRL(c.faturamento_bruto)} × ${c.commission_percent}%
+                </div>
+              </div>
+              <div style="font-family:'Playfair Display';font-size:22px;font-weight:700;color:var(--gold)">
+                ${bf.formatBRL(c.comissao_total)}
+              </div>
+              <button class="btn btn-primary btn-sm" onclick='openPayCommissionModal(${JSON.stringify(c).replace(/'/g, "&#39;")})'>
+                Pagar
+              </button>
+            </div>
+          `).join('')}
+        </div>
+        <div style="margin-top:14px;padding:10px 14px;background:rgba(111,207,151,0.05);border-radius:8px;font-size:11px;color:var(--text-soft);text-align:center">
+          💡 Quando você "Pagar", o sistema registra a despesa e marca os atendimentos como quitados.
+        </div>
+      </div>
+    ` : ''}
+
+    <!-- Lista de despesas do mês -->
+    <div class="card" style="margin-bottom:20px">
+      <div class="block-h">
+        <h3>📋 Lançamentos de despesas · ${periodo}</h3>
+        <button class="btn btn-ghost btn-sm" onclick="openDespesaModal()">+ Nova despesa</button>
+      </div>
+      ${despesas.length === 0 ? `
+        <div style="text-align:center;padding:40px;color:var(--text-dim);font-size:13px">
+          Nenhuma despesa cadastrada esse mês.
+        </div>
+      ` : `
+        <div style="display:grid;gap:8px">
+          ${despesas.map(d => `
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:var(--bg-soft);border-radius:8px;gap:14px">
+              <div style="flex:1;min-width:0">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                  <strong style="font-size:13px">${catLabels[d.categoria] || d.categoria}</strong>
+                  ${d.beneficiario_name ? `<span style="font-size:11px;color:var(--text-dim)">→ ${escapeHtml(d.beneficiario_name)}</span>` : ''}
+                  ${d.recorrente ? `<span style="font-size:10px;color:var(--gold);background:rgba(212,168,87,0.15);padding:2px 6px;border-radius:8px">🔄</span>` : ''}
+                </div>
+                <div style="font-size:11px;color:var(--text-dim);margin-top:2px">
+                  ${new Date(d.data).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}
+                  ${d.forma_pagamento ? ' · ' + d.forma_pagamento : ''}
+                  ${d.descricao ? ' · ' + escapeHtml(d.descricao) : ''}
+                </div>
+              </div>
+              <div style="text-align:right">
+                <div style="font-family:'Playfair Display';font-size:16px;font-weight:700;color:var(--red)">- ${bf.formatBRL(d.valor)}</div>
+                <button onclick="excluirDespesa('${d.id}')" style="background:none;border:none;color:var(--text-dim);font-size:11px;cursor:pointer;margin-top:2px">🗑️</button>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+        <div style="display:flex;justify-content:flex-end;margin-top:14px;padding-top:14px;border-top:1px solid var(--line);font-weight:600">
+          <div style="display:flex;gap:14px;align-items:center">
+            <span style="color:var(--text-soft);font-size:13px">Total do mês:</span>
+            <span style="color:var(--red);font-family:'Playfair Display';font-size:18px">- ${bf.formatBRL(despesa.total || 0)}</span>
           </div>
         </div>
       `}
     </div>
 
-    <div style="background:rgba(212,168,87,0.04);border:1px solid rgba(212,168,87,0.15);border-radius:8px;padding:14px;font-size:12px;color:var(--text-soft);line-height:1.6">
-      💡 <strong style="color:var(--gold)">Próximas funcionalidades:</strong> Exportação em PDF, registro de pagamentos efetuados, histórico de pagamentos por mês, e separação de quem recebe via PIX/dinheiro.
+    <!-- Folha de pagamento (legado, mantido) -->
+    ${state.barbearia && ranking.length > 0 ? `
+      <div class="card" style="margin-bottom:20px">
+        <div class="block-h">
+          <h3>📊 Folha de pagamento · ${periodo}</h3>
+          <button class="btn btn-ghost btn-sm" onclick="exportarFolha()">📋 Copiar</button>
+        </div>
+        ${ranking.filter(r => r.role !== 'OWNER').length === 0 ? `
+          <p style="color:var(--text-dim);text-align:center;padding:30px">Nenhum barbeiro com comissão configurada</p>
+        ` : `
+          <div class="payroll-table">
+            ${ranking.filter(r => r.role !== 'OWNER').map(r => `
+              <div class="payroll-row">
+                <div class="payroll-name">
+                  <div style="font-size:14px;font-weight:600">${escapeHtml(r.barber_name)}</div>
+                  <div style="font-size:11px;color:var(--text-dim)">${roleLabel(r.role)} · ${commissionLabel(r)}</div>
+                </div>
+                <div class="payroll-details">
+                  ${r.commission_model === 'PERCENT' || r.commission_model === 'MIXED' ? `
+                    <div style="font-size:11px;color:var(--text-soft)">${bf.formatBRL(r.faturamento)} × ${r.commission_percent}% = <strong style="color:var(--gold)">${bf.formatBRL(r.comissao)}</strong></div>
+                  ` : ''}
+                  ${r.commission_model === 'RENT' ? `
+                    <div style="font-size:11px;color:var(--text-soft)">Aluguel: <strong style="color:var(--green)">A RECEBER</strong></div>
+                  ` : ''}
+                </div>
+                <div class="payroll-value">${r.commission_model === 'RENT' ? '—' : bf.formatBRL(r.comissao)}</div>
+              </div>
+            `).join('')}
+          </div>
+        `}
+      </div>
+    ` : ''}
+  `;
+}
+
+// Navega entre meses do financeiro
+function navegarMes(year, month) {
+  window._finView = { year, month };
+  renderRelatorioFinanceiro();
+}
+
+// ============================================
+// MODAL: NOVA DESPESA
+// ============================================
+function openDespesaModal() {
+  const today = new Date().toISOString().split('T')[0];
+  const modal = document.getElementById('despesaModal') || createDespesaModal();
+  modal.querySelector('form').reset();
+  modal.querySelector('[name="data"]').value = today;
+  modal.classList.add('open');
+}
+
+function createDespesaModal() {
+  const div = document.createElement('div');
+  div.id = 'despesaModal';
+  div.className = 'modal';
+  div.innerHTML = `
+    <div class="modal-content" style="max-width:480px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
+        <h2 style="font-family:'Playfair Display';font-size:22px;font-weight:700">Nova despesa</h2>
+        <button onclick="closeModal('despesaModal')" style="background:none;border:none;color:var(--text-dim);font-size:24px;cursor:pointer">×</button>
+      </div>
+      <form id="despesaForm" onsubmit="confirmarDespesa(event)">
+        <div class="form-row">
+          <label>Categoria *</label>
+          <select name="categoria" required>
+            <option value="">Selecione...</option>
+            <option value="ALUGUEL">🏠 Aluguel</option>
+            <option value="PRODUTOS">🧴 Produtos</option>
+            <option value="AGUA_LUZ">💡 Água/Luz</option>
+            <option value="INTERNET">🌐 Internet</option>
+            <option value="MARKETING">📢 Marketing</option>
+            <option value="EQUIPAMENTO">✂️ Equipamento</option>
+            <option value="IMPOSTO">📑 Imposto</option>
+            <option value="SALARIO">👤 Salário fixo</option>
+            <option value="OUTRO">📦 Outro</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>Valor *</label>
+          <input name="valor" type="number" step="0.01" min="0.01" placeholder="0,00" required>
+        </div>
+        <div class="form-row">
+          <label>Data *</label>
+          <input name="data" type="date" required>
+        </div>
+        <div class="form-row">
+          <label>Forma de pagamento</label>
+          <select name="forma_pagamento">
+            <option value="">Não informar</option>
+            <option value="DINHEIRO">💵 Dinheiro</option>
+            <option value="PIX">📱 PIX</option>
+            <option value="CARTAO">💳 Cartão</option>
+            <option value="TRANSFERENCIA">🏦 Transferência</option>
+            <option value="BOLETO">📄 Boleto</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>Descrição (opcional)</label>
+          <input name="descricao" type="text" placeholder="Ex: Aluguel maio">
+        </div>
+        <div style="display:flex;gap:10px;margin-top:20px">
+          <button type="button" class="btn btn-ghost" onclick="closeModal('despesaModal')" style="flex:1">Cancelar</button>
+          <button type="submit" class="btn btn-primary" id="despesaSaveBtn" style="flex:2">Lançar despesa</button>
+        </div>
+      </form>
     </div>
   `;
+  document.body.appendChild(div);
+  return div;
+}
+
+async function confirmarDespesa(e) {
+  e.preventDefault();
+  const btn = document.getElementById('despesaSaveBtn');
+  btn.disabled = true;
+  btn.textContent = 'Salvando...';
+
+  const fd = new FormData(e.target);
+  const payload = {
+    user_id: state.user.id,
+    data: fd.get('data'),
+    valor: Number(fd.get('valor')),
+    categoria: fd.get('categoria'),
+    forma_pagamento: fd.get('forma_pagamento') || null,
+    descricao: fd.get('descricao') || null,
+  };
+
+  const { error } = await sb.from('despesas').insert(payload);
+  
+  if (error) {
+    bf.toast('Erro: ' + error.message, 'error');
+    btn.disabled = false;
+    btn.textContent = 'Lançar despesa';
+    return;
+  }
+
+  bf.toast('✓ Despesa lançada', 'success');
+  closeModal('despesaModal');
+  renderRelatorioFinanceiro();
+}
+
+async function excluirDespesa(id) {
+  if (!confirm('Excluir essa despesa?')) return;
+  const { error } = await sb.from('despesas').delete().eq('id', id);
+  if (error) {
+    bf.toast('Erro: ' + error.message, 'error');
+    return;
+  }
+  bf.toast('✓ Despesa excluída', 'success');
+  renderRelatorioFinanceiro();
+}
+
+// ============================================
+// MODAL: PAGAR COMISSÃO
+// ============================================
+function openPayCommissionModal(commissionData) {
+  const modal = document.getElementById('payCommissionModal') || createPayCommissionModal();
+  modal._commissionData = commissionData;
+  
+  modal.querySelector('[data-field="barbeiro-name"]').textContent = commissionData.display_name;
+  modal.querySelector('[data-field="atendimentos"]').textContent = `${commissionData.atendimentos_count} atendimentos`;
+  modal.querySelector('[data-field="faturamento"]').textContent = bf.formatBRL(commissionData.faturamento_bruto);
+  modal.querySelector('[data-field="percent"]').textContent = commissionData.commission_percent + '%';
+  modal.querySelector('[name="valor"]').value = commissionData.comissao_total;
+  
+  modal.classList.add('open');
+}
+
+function createPayCommissionModal() {
+  const div = document.createElement('div');
+  div.id = 'payCommissionModal';
+  div.className = 'modal';
+  div.innerHTML = `
+    <div class="modal-content" style="max-width:480px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
+        <h2 style="font-family:'Playfair Display';font-size:22px;font-weight:700">Pagar comissão</h2>
+        <button onclick="closeModal('payCommissionModal')" style="background:none;border:none;color:var(--text-dim);font-size:24px;cursor:pointer">×</button>
+      </div>
+      <div style="background:var(--bg-soft);padding:16px;border-radius:10px;margin-bottom:18px">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <div>
+            <div style="font-weight:600" data-field="barbeiro-name">—</div>
+            <div style="font-size:11px;color:var(--text-dim)" data-field="atendimentos">—</div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-size:11px;color:var(--text-dim)">Faturamento × %</div>
+            <div style="font-size:12px"><span data-field="faturamento">R$ 0</span> × <span data-field="percent">0%</span></div>
+          </div>
+        </div>
+      </div>
+      <form id="payCommissionForm" onsubmit="confirmarPagamentoComissao(event)">
+        <div class="form-row">
+          <label>Valor a pagar *</label>
+          <input name="valor" type="number" step="0.01" min="0.01" required>
+          <small style="color:var(--text-dim);font-size:11px;margin-top:4px;display:block">Você pode ajustar se quiser pagar diferente do calculado.</small>
+        </div>
+        <div class="form-row">
+          <label>Forma de pagamento *</label>
+          <select name="forma_pagamento" required>
+            <option value="PIX">📱 PIX</option>
+            <option value="DINHEIRO">💵 Dinheiro</option>
+            <option value="TRANSFERENCIA">🏦 Transferência</option>
+            <option value="CARTAO">💳 Cartão</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>Observação (opcional)</label>
+          <input name="descricao" type="text" placeholder="Ex: comissão maio">
+        </div>
+        <div style="background:rgba(111,207,151,0.06);border:1px solid rgba(111,207,151,0.2);padding:12px;border-radius:8px;font-size:11px;color:var(--text-soft);line-height:1.6;margin-top:14px">
+          ✅ Ao confirmar, o sistema vai:<br>
+          1. Registrar essa despesa<br>
+          2. Marcar os atendimentos como "comissão paga"<br>
+          3. O barbeiro vai aparecer zerado até receber novos atendimentos
+        </div>
+        <div style="display:flex;gap:10px;margin-top:20px">
+          <button type="button" class="btn btn-ghost" onclick="closeModal('payCommissionModal')" style="flex:1">Cancelar</button>
+          <button type="submit" class="btn btn-primary" id="payCommissionBtn" style="flex:2">Confirmar pagamento</button>
+        </div>
+      </form>
+    </div>
+  `;
+  document.body.appendChild(div);
+  return div;
+}
+
+async function confirmarPagamentoComissao(e) {
+  e.preventDefault();
+  const btn = document.getElementById('payCommissionBtn');
+  btn.disabled = true;
+  btn.textContent = 'Processando...';
+
+  const modal = document.getElementById('payCommissionModal');
+  const data = modal._commissionData;
+  const fd = new FormData(e.target);
+
+  const { data: result, error } = await sb.rpc('pay_commission', {
+    p_barbeiro_user_id: data.user_id,
+    p_amount: Number(fd.get('valor')),
+    p_forma_pagamento: fd.get('forma_pagamento'),
+    p_atendimento_ids: data.atendimento_ids,
+    p_descricao: fd.get('descricao') || null,
+  });
+
+  if (error || result?.error) {
+    bf.toast('Erro: ' + (error?.message || result?.error), 'error');
+    btn.disabled = false;
+    btn.textContent = 'Confirmar pagamento';
+    return;
+  }
+
+  bf.toast(`✓ Comissão paga: ${bf.formatBRL(result.amount)} pra ${result.beneficiario}`, 'success');
+  closeModal('payCommissionModal');
+  renderRelatorioFinanceiro();
 }
 
 // Exportar folha (copia texto pra área de transferência)
@@ -6056,6 +6445,12 @@ window.renderBarbershopDashboard = renderBarbershopDashboard;
 window.renderBarberDashboard = renderBarberDashboard;
 // Relatórios
 window.renderRelatorios = renderRelatorios;
+window.navegarMes = navegarMes;
+window.openDespesaModal = openDespesaModal;
+window.confirmarDespesa = confirmarDespesa;
+window.excluirDespesa = excluirDespesa;
+window.openPayCommissionModal = openPayCommissionModal;
+window.confirmarPagamentoComissao = confirmarPagamentoComissao;
 window.setRelatorioPeriodo = setRelatorioPeriodo;
 window.setRelatorioTab = setRelatorioTab;
 window.exportarFolha = exportarFolha;
