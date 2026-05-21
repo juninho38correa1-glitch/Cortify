@@ -1287,17 +1287,34 @@ async function renderRelatorioFinanceiro() {
   }
   const { year, month } = window._finView;
 
-  // Carrega tudo em paralelo
+  // Carrega tudo em paralelo, com proteção contra erros individuais
   const [summaryRes, despesasRes, commissionsRes, rankingRes] = await Promise.all([
-    sb.rpc('financial_summary_month', { p_year: year, p_month: month }),
-    sb.rpc('list_despesas_month', { p_year: year, p_month: month }),
-    sb.rpc('calc_pending_commissions').catch(() => ({ data: [] })),
+    sb.rpc('financial_summary_month', { p_year: year, p_month: month })
+      .catch(err => { console.error('financial_summary_month falhou:', err); return { data: null, error: err }; }),
+    sb.rpc('list_despesas_month', { p_year: year, p_month: month })
+      .catch(err => { console.error('list_despesas_month falhou:', err); return { data: [], error: err }; }),
+    sb.rpc('calc_pending_commissions')
+      .catch(err => { console.error('calc_pending_commissions falhou:', err); return { data: [], error: err }; }),
     state.barbearia ? sb.rpc('get_barber_ranking', {
       p_barbershop_id: state.barbearia.id,
       p_start_date: new Date(year, month - 1, 1).toISOString(),
       p_end_date: new Date(year, month, 1).toISOString(),
-    }) : Promise.resolve({ data: [] }),
+    }).catch(err => { console.error('get_barber_ranking falhou:', err); return { data: [], error: err }; })
+     : Promise.resolve({ data: [] }),
   ]);
+
+  // Se a função principal falhou, mostra erro claro
+  if (summaryRes.error || !summaryRes.data) {
+    container.innerHTML = `
+      <div class="card" style="text-align:center;padding:40px;color:var(--red)">
+        <div style="font-size:32px;margin-bottom:10px">⚠️</div>
+        <strong>Erro ao carregar dados financeiros</strong>
+        <p style="font-size:13px;color:var(--text-soft);margin-top:10px">${escapeHtml(summaryRes.error?.message || 'Erro desconhecido')}</p>
+        <button class="btn btn-ghost btn-sm" onclick="renderRelatorioFinanceiro()" style="margin-top:14px">🔄 Tentar de novo</button>
+      </div>
+    `;
+    return;
+  }
 
   const summary = summaryRes.data || {};
   const despesas = despesasRes.data || [];
@@ -1431,7 +1448,11 @@ async function renderRelatorioFinanceiro() {
           </span>
         </div>
         <div style="display:grid;gap:10px">
-          ${pendingCommissions.map(c => `
+          ${pendingCommissions.map((c, idx) => {
+            // Guarda dados no window pra evitar problemas de escape
+            window._pendingCommissions = window._pendingCommissions || {};
+            window._pendingCommissions[idx] = c;
+            return `
             <div style="display:flex;align-items:center;justify-content:space-between;padding:14px;background:var(--bg-soft);border-radius:8px;gap:14px;flex-wrap:wrap">
               <div style="flex:1;min-width:180px">
                 <div style="font-weight:600;font-size:14px">${escapeHtml(c.display_name)}</div>
@@ -1442,11 +1463,11 @@ async function renderRelatorioFinanceiro() {
               <div style="font-family:'Playfair Display';font-size:22px;font-weight:700;color:var(--gold)">
                 ${bf.formatBRL(c.comissao_total)}
               </div>
-              <button class="btn btn-primary btn-sm" onclick='openPayCommissionModal(${JSON.stringify(c).replace(/'/g, "&#39;")})'>
+              <button class="btn btn-primary btn-sm" onclick="openPayCommissionModal(window._pendingCommissions[${idx}])">
                 Pagar
               </button>
             </div>
-          `).join('')}
+          `}).join('')}
         </div>
         <div style="margin-top:14px;padding:10px 14px;background:rgba(111,207,151,0.05);border-radius:8px;font-size:11px;color:var(--text-soft);text-align:center">
           💡 Quando você "Pagar", o sistema registra a despesa e marca os atendimentos como quitados.
