@@ -152,11 +152,27 @@ async function marcarComoConfirmado(agendamentoId) {
   // Carrega subscription atual do usuário (com plano + versão)
   await loadUserSubscription();
 
-  // Verifica acesso
-  if (!bf.hasAccess(state.profile)) {
-    showAccessDenied();
+  // Verifica acesso usando a função canônica do banco (suporta barbearia)
+  let accessAllowed = false;
+  let accessInfo = null;
+  try {
+    const { data: access } = await sb.rpc('my_access_status');
+    accessInfo = access;
+    accessAllowed = !!access?.access;
+  } catch (e) {
+    console.warn('my_access_status falhou, usando fallback bf.hasAccess:', e);
+    accessAllowed = bf.hasAccess(state.profile);
+  }
+
+  if (!accessAllowed) {
+    // Guarda info no state pra showAccessDenied poder usar (motivo, barbearia, etc)
+    state.accessInfo = accessInfo;
+    showAccessDenied(accessInfo);
     return;
   }
+
+  // Guarda no state pra outras telas usarem (ex: banner de PAST_DUE)
+  state.accessInfo = accessInfo;
 
   // Registra PWA / Service Worker
   if (window.bfPwa) {
@@ -236,22 +252,73 @@ function currentPrice() {
 }
 
 // ========== ACESSO BLOQUEADO ==========
-function showAccessDenied() {
+function showAccessDenied(accessInfo) {
+  // Configura mensagens diferentes baseado no motivo
+  const reason = accessInfo?.reason || 'UNKNOWN';
+  
+  let title = 'Acesso expirado';
+  let icon = '⏰';
+  let message = '';
+  let showPixInfo = true;
+  let actionLabel = 'Enviar comprovante';
+  
+  if (reason === 'BARBERSHOP_UNPAID') {
+    title = 'Acesso bloqueado';
+    icon = '🏪';
+    showPixInfo = false;
+    message = `
+      <strong>A barbearia ${escapeHtml(accessInfo.barbershop_name || '')} está com pagamento pendente.</strong><br><br>
+      Como você é membro da equipe, seu acesso depende do pagamento em dia do dono.<br><br>
+      Avise o responsável pra regularizar a assinatura.
+    `;
+    actionLabel = 'Avisar o dono';
+  } else if (reason === 'OWNER_NO_SUBSCRIPTION') {
+    title = 'Acesso pendente';
+    icon = '⏳';
+    showPixInfo = false;
+    message = `
+      <strong>A barbearia ainda não tem assinatura configurada.</strong><br><br>
+      O dono precisa contratar um plano pra liberar o acesso da equipe.
+    `;
+    actionLabel = 'Falar com o suporte';
+  } else if (reason === 'SUBSCRIPTION_INACTIVE') {
+    title = 'Assinatura inativa';
+    icon = '❌';
+    message = `
+      Sua assinatura está com status <strong>${escapeHtml(accessInfo.status || '')}</strong>.<br><br>
+      Para reativar, faça o pagamento de <strong style="color:var(--gold)">${bf.formatBRL(currentPrice())}</strong> via PIX:
+    `;
+  } else if (reason === 'NO_SUBSCRIPTION') {
+    title = 'Sem assinatura';
+    icon = '💳';
+    message = `
+      Sua conta não tem assinatura ativa.<br><br>
+      Faça um PIX de <strong style="color:var(--gold)">${bf.formatBRL(currentPrice())}</strong> pra ativar:
+    `;
+  } else {
+    // Padrão: trial vencido / acesso expirado
+    message = `
+      Seu período grátis acabou ou seu pagamento não está em dia.<br><br>
+      Para reativar, faça um PIX de <strong style="color:var(--gold)">${bf.formatBRL(currentPrice())}</strong> para a chave:
+    `;
+  }
+  
   document.body.innerHTML = `
     <div style="min-height:100vh;display:grid;place-items:center;padding:20px">
       <div style="max-width:500px;text-align:center;background:var(--bg-card);border:1px solid var(--line);border-radius:16px;padding:40px">
-        <div style="width:64px;height:64px;border-radius:50%;background:rgba(224,116,116,0.1);color:var(--red);display:grid;place-items:center;margin:0 auto 20px">
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <div style="width:64px;height:64px;border-radius:50%;background:rgba(224,116,116,0.1);color:var(--red);display:grid;place-items:center;margin:0 auto 20px;font-size:32px">${icon}</div>
+        <h1 class="font-display" style="font-size:26px;font-weight:700;margin-bottom:8px">${title}</h1>
+        <div style="color:var(--text-soft);font-size:14px;line-height:1.6;margin-bottom:24px;text-align:left">
+          ${message}
+          ${showPixInfo ? `
+            <div style="text-align:center;margin-top:12px">
+              <code style="background:var(--bg-soft);padding:8px 12px;border-radius:6px;display:inline-block;color:var(--gold)">${window.APP_CONFIG.pixKey}</code>
+            </div>
+            <p style="margin-top:14px;text-align:center;font-size:13px">Depois envie o comprovante no WhatsApp:</p>
+          ` : ''}
         </div>
-        <h1 class="font-display" style="font-size:26px;font-weight:700;margin-bottom:8px">Acesso expirado</h1>
-        <p style="color:var(--text-soft);font-size:14px;line-height:1.6;margin-bottom:24px">
-          Seu período grátis acabou ou seu pagamento não está em dia.<br><br>
-          Para reativar, faça um PIX de <strong style="color:var(--gold)">${bf.formatBRL(currentPrice())}</strong> para a chave:<br>
-          <code style="background:var(--bg-soft);padding:8px 12px;border-radius:6px;display:inline-block;margin-top:8px;color:var(--gold)">${window.APP_CONFIG.pixKey}</code><br><br>
-          Depois envie o comprovante no WhatsApp:
-        </p>
-        <a href="${bf.whatsappLink(window.APP_CONFIG.whatsappAdmin, 'Olá! Fiz o pagamento do Cortify, segue o comprovante.')}" target="_blank" class="btn btn-primary btn-lg">
-          Enviar comprovante
+        <a href="${bf.whatsappLink(window.APP_CONFIG.whatsappAdmin, 'Olá! ' + (reason === 'BARBERSHOP_UNPAID' ? 'Sou ' + (state.profile?.name || 'um barbeiro') + ' da barbearia ' + (accessInfo?.barbershop_name || '') + ' e meu acesso está bloqueado.' : 'Fiz o pagamento do Cortify, segue o comprovante.'))}" target="_blank" class="btn btn-primary btn-lg">
+          ${actionLabel}
         </a>
         <button onclick="logout()" style="display:block;margin:20px auto 0;background:transparent;border:none;color:var(--text-dim);font-size:12px;cursor:pointer;font-family:inherit">
           Sair
