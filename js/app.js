@@ -331,8 +331,28 @@ function showAccessDenied(accessInfo) {
 // ========== TRIAL BANNER ==========
 function renderTrialBanner() {
   const banner = document.getElementById("trialBanner");
+  if (!banner) return;
+
+  // Se o acesso é pago pela barbearia, NÃO mostra banner de trial
+  // (ele não tem trial individual, a barbearia paga por ele)
+  if (state.accessInfo?.reason === 'PAID_BY_BARBERSHOP' || state.accessInfo?.reason === 'GRACE_PERIOD') {
+    banner.innerHTML = '';
+    return;
+  }
+
+  // Se o acesso é via subscription própria ACTIVE, sem banner
+  if (state.accessInfo?.reason === 'OWN_SUBSCRIPTION' && state.accessInfo?.status === 'ACTIVE') {
+    banner.innerHTML = '';
+    return;
+  }
+
   if (state.profile.subscription_status === "TRIAL") {
     const days = bf.trialDaysLeft(state.profile);
+    // Se trial_ends_at é null, não mostra banner (era erro)
+    if (!state.profile.trial_ends_at) {
+      banner.innerHTML = '';
+      return;
+    }
     banner.innerHTML = `
       <div class="trial-banner">
         <div style="display:flex;align-items:center;gap:14px">
@@ -4495,8 +4515,12 @@ async function renderServicos() {
 
 function renderContaPrincipal() {
   const profile = state.profile;
-  const isTrial = profile.subscription_status === "TRIAL";
-  const isActive = profile.subscription_status === "ACTIVE";
+  
+  // Se acesso é via barbearia, ignora flags de trial/active do profile
+  const paidByBarbershop = state.accessInfo?.reason === 'PAID_BY_BARBERSHOP' || state.accessInfo?.reason === 'GRACE_PERIOD';
+  
+  const isTrial = !paidByBarbershop && profile.subscription_status === "TRIAL";
+  const isActive = paidByBarbershop || profile.subscription_status === "ACTIVE";
   const days = isTrial ? bf.trialDaysLeft(profile) : 0;
 
   // Datas
