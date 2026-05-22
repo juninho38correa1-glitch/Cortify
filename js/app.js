@@ -993,13 +993,17 @@ async function renderBarberDashboard() {
           <div class="block-h"><h3>Últimos atendimentos</h3></div>
           ${ultimosAtend.slice(0, 5).map(a => {
             const data = new Date(a.data).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" });
+            const viaPacote = a.pago_via_pacote;
             return `
               <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line-soft)">
                 <div style="flex:1;min-width:0">
-                  <div style="font-size:13px;font-weight:600">${escapeHtml(a.cliente?.nome || '?')}</div>
-                  <div style="font-size:10px;color:var(--text-dim)">${escapeHtml(a.servico?.nome || '?')} · ${data}</div>
+                  <div style="font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px">
+                    ${escapeHtml(a.cliente?.nome || '?')}
+                    ${viaPacote ? '<span style="font-size:9px;background:rgba(192,132,252,0.15);color:#c084fc;padding:2px 6px;border-radius:10px;font-weight:600">📦 PACOTE</span>' : ''}
+                  </div>
+                  <div style="font-size:10px;color:var(--text-dim)">${escapeHtml(a.servico?.nome || '?')} · ${data}${a.forma_pagamento && !viaPacote ? ' · ' + a.forma_pagamento : ''}</div>
                 </div>
-                <div style="font-family:'JetBrains Mono', monospace;font-size:12px;color:var(--gold);font-weight:600">${bf.formatBRL(a.pago_via_pacote ? (a.servico?.preco || 0) : (a.valor_avulso || 0))}</div>
+                <div style="font-family:'JetBrains Mono', monospace;font-size:12px;color:var(--gold);font-weight:600">${bf.formatBRL(viaPacote ? (a.servico?.preco || 0) : (a.valor_avulso || 0))}</div>
               </div>
             `;
           }).join('')}
@@ -1388,9 +1392,11 @@ async function renderRelatorioFinanceiro() {
     <!-- KPIs principais -->
     <div class="stats-grid" style="margin-bottom:20px">
       <div class="stat-card gold">
-        <div class="stat-label">Receita</div>
-        <div class="stat-num">${bf.formatBRL(receita.total || 0)}</div>
-        <div class="stat-foot">${summary.atendimentos || 0} atendimentos</div>
+        <div class="stat-label">Receita${(receita.aluguel_a_receber || 0) > 0 ? ' total' : ''}</div>
+        <div class="stat-num">${bf.formatBRL(receita.receita_consolidada || receita.total || 0)}</div>
+        <div class="stat-foot">
+          ${summary.atendimentos || 0} atend.${(receita.aluguel_a_receber || 0) > 0 ? ' + aluguel' : ''}
+        </div>
       </div>
       <div class="stat-card" style="border-color:var(--red)">
         <div class="stat-label">Despesas</div>
@@ -1429,6 +1435,21 @@ async function renderRelatorioFinanceiro() {
               <strong style="font-size:14px;color:var(--text)">${bf.formatBRL(item.val || 0)}</strong>
             </div>
           `).join('')}
+          ${(receita.aluguel_a_receber || 0) > 0 ? `
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:rgba(212,168,87,0.08);border-radius:8px;border-left:3px solid var(--gold)">
+              <span style="font-size:13px;color:var(--gold);font-weight:600">🏠 Aluguel a receber</span>
+              <strong style="font-size:14px;color:var(--gold)">${bf.formatBRL(receita.aluguel_a_receber)}</strong>
+            </div>
+            <div style="padding:8px 14px;background:rgba(0,0,0,0.15);border-radius:6px;font-size:11px;color:var(--text-dim);line-height:1.5">
+              ℹ️ Total mensal que os barbeiros em modelo "aluguel de cadeira" devem te pagar.
+            </div>
+          ` : ''}
+          ${(receita.receita_consolidada || 0) > (receita.total || 0) ? `
+            <div style="margin-top:6px;padding:12px 14px;border-top:2px solid var(--gold);display:flex;justify-content:space-between;align-items:center;font-weight:600">
+              <span style="font-size:13px">Receita consolidada</span>
+              <strong style="font-size:16px;color:var(--gold);font-family:'Playfair Display'">${bf.formatBRL(receita.receita_consolidada)}</strong>
+            </div>
+          ` : ''}
         </div>
       </div>
 
@@ -1565,10 +1586,10 @@ async function renderRelatorioFinanceiro() {
                     <div style="font-size:11px;color:var(--text-soft)">${bf.formatBRL(r.faturamento)} × ${r.commission_percent}% = <strong style="color:var(--gold)">${bf.formatBRL(r.comissao)}</strong></div>
                   ` : ''}
                   ${r.commission_model === 'RENT' ? `
-                    <div style="font-size:11px;color:var(--text-soft)">Aluguel: <strong style="color:var(--green)">A RECEBER</strong></div>
+                    <div style="font-size:11px;color:var(--text-soft)">🏠 Aluguel mensal: <strong style="color:var(--gold)">${bf.formatBRL(r.rent_amount || 0)}</strong> · ${r.atendimentos || 0} atend. (terceirizado)</div>
                   ` : ''}
                 </div>
-                <div class="payroll-value">${r.commission_model === 'RENT' ? '—' : bf.formatBRL(r.comissao)}</div>
+                <div class="payroll-value">${r.commission_model === 'RENT' ? '+' + bf.formatBRL(r.rent_amount || 0) : bf.formatBRL(r.comissao)}</div>
               </div>
             `).join('')}
           </div>
@@ -3068,6 +3089,11 @@ async function renderClienteDetail(id) {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
             WhatsApp
           </a>
+          ${pacotes.filter(p => p.status === 'ATIVO' && p.itens.some(i => i.quantidade_usada < i.quantidade_total)).length > 0 ? `
+            <button class="btn btn-primary" style="background:linear-gradient(135deg,var(--gold) 0%, #b8893b 100%)" onclick='escolherPacotePraBaixar("${cliente.id}")'>
+              ✂️ Usar pacote
+            </button>
+          ` : ''}
           <button class="btn btn-primary" onclick='openPacoteModal("${cliente.id}", ${JSON.stringify(cliente.nome)})'>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             Vender pacote
@@ -3121,11 +3147,14 @@ async function renderClienteDetail(id) {
                 <span style="color:var(--text-dim);font-size:10px">${hora}</span>
               </div>
               <div style="flex:1">
-                <div class="history-title">${escapeHtml(a.servico?.nome || "Serviço")}</div>
-                <div class="history-sub">${a.pago_via_pacote ? "via pacote" : "Avulso"}</div>
+                <div class="history-title" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                  ${escapeHtml(a.servico?.nome || "Serviço")}
+                  ${a.pago_via_pacote ? '<span style="font-size:9px;background:rgba(192,132,252,0.15);color:#c084fc;padding:2px 6px;border-radius:10px;font-weight:600">📦 PACOTE</span>' : ''}
+                </div>
+                <div class="history-sub">${a.pago_via_pacote ? "via pacote" : (a.forma_pagamento || "Avulso")}</div>
               </div>
-              <div style="font-size:13px;font-weight:600;color:${a.valor_avulso ? "var(--gold)" : "var(--text-dim)"}">
-                ${a.valor_avulso ? bf.formatBRL(a.valor_avulso) : "—"}
+              <div style="font-size:13px;font-weight:600;color:${a.valor_avulso || a.pago_via_pacote ? "var(--gold)" : "var(--text-dim)"}">
+                ${a.valor_avulso ? bf.formatBRL(a.valor_avulso) : (a.pago_via_pacote ? bf.formatBRL(a.servico?.preco || 0) : "—")}
               </div>
             </div>
           `}).join("")}
@@ -3388,10 +3417,12 @@ function renderPacotes() {
       ${state.pacotes.map(p => {
         const totalServicos = p.itens.reduce((acc, i) => acc + i.quantidade_total, 0);
         const usados = p.itens.reduce((acc, i) => acc + i.quantidade_usada, 0);
+        const restantes = totalServicos - usados;
         const pct = totalServicos > 0 ? (usados / totalServicos) * 100 : 0;
+        const podeUsar = restantes > 0 && p.status === 'ATIVO';
         return `
-          <div class="card" style="cursor:pointer" onclick="navigate('pacote-detail', { id: '${p.id}' })">
-            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap">
+          <div class="card" style="position:relative">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap;cursor:pointer" onclick="navigate('pacote-detail', { id: '${p.id}' })">
               <div style="flex:1;min-width:200px">
                 <div style="display:flex;align-items:center;gap:10px">
                   <div class="avatar avatar-sm">${bf.getInitials(p.cliente?.nome || "?")}</div>
@@ -3404,16 +3435,183 @@ function renderPacotes() {
               </div>
               <div style="text-align:right">
                 <div style="font-family:'Playfair Display';font-size:22px;font-weight:700;color:var(--gold)">
-                  ${totalServicos - usados}<span style="color:var(--text-dim);font-size:14px">/${totalServicos}</span>
+                  ${restantes}<span style="color:var(--text-dim);font-size:14px">/${totalServicos}</span>
                 </div>
                 <div style="font-size:10px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase">restantes</div>
               </div>
             </div>
+            ${podeUsar ? `
+              <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line-soft);display:flex;gap:8px">
+                <button class="btn btn-ghost btn-sm" style="flex:1" onclick="event.stopPropagation(); abrirBaixarUsoPacote('${p.id}')">
+                  ✂️ Baixar uso
+                </button>
+                <button class="btn btn-ghost btn-sm" style="flex:1" onclick="event.stopPropagation(); navigate('pacote-detail', { id: '${p.id}' })">
+                  👁️ Ver detalhes
+                </button>
+              </div>
+            ` : `
+              <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line-soft);text-align:center;font-size:11px;color:var(--text-dim)">
+                ${p.status === 'ENCERRADO' ? '✅ Pacote concluído' : '⚠️ Sem serviços disponíveis'}
+              </div>
+            `}
           </div>
         `;
       }).join("")}
     </div>
   `;
+}
+
+// ========== BAIXAR USO DE PACOTE (manual) ==========
+async function abrirBaixarUsoPacote(pacoteId) {
+  // Busca o pacote completo
+  const { data: pacote, error } = await sb.from('pacotes')
+    .select('*, cliente:clientes(id, nome), itens:pacote_itens(*, servico:servicos(nome, preco))')
+    .eq('id', pacoteId)
+    .single();
+  
+  if (error || !pacote) {
+    bf.toast('Erro ao carregar pacote', 'error');
+    return;
+  }
+  
+  // Filtra apenas itens com saldo
+  const itensDisponiveis = pacote.itens.filter(i => i.quantidade_usada < i.quantidade_total);
+  
+  if (itensDisponiveis.length === 0) {
+    bf.toast('Esse pacote não tem serviços disponíveis', 'info');
+    return;
+  }
+  
+  // Cria modal pra escolher qual serviço
+  let modal = document.getElementById('baixarUsoModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'baixarUsoModal';
+    modal.className = 'modal-overlay';
+    document.body.appendChild(modal);
+  }
+  
+  modal.innerHTML = `
+    <div class="modal" style="max-width:480px">
+      <div class="modal-header">
+        <div>
+          <h2>✂️ Baixar uso do pacote</h2>
+          <div class="modal-header-sub">${escapeHtml(pacote.cliente?.nome || '?')} · ${escapeHtml(pacote.nome)}</div>
+        </div>
+        <button class="modal-close" onclick="closeModal('baixarUsoModal')">×</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:13px;color:var(--text-soft);margin-bottom:14px">
+          Escolha qual serviço foi realizado agora:
+        </p>
+        <div style="display:grid;gap:10px">
+          ${itensDisponiveis.map(item => {
+            const restante = item.quantidade_total - item.quantidade_usada;
+            return `
+              <button 
+                class="btn btn-ghost" 
+                style="display:flex;justify-content:space-between;align-items:center;padding:14px;text-align:left;width:100%"
+                onclick="confirmarBaixarUso('${item.id}', '${pacote.id}', '${pacote.cliente?.id}', ${JSON.stringify(item.servico?.nome || 'Serviço').replace(/"/g, '&quot;')})">
+                <div>
+                  <div style="font-weight:600;font-size:14px">${escapeHtml(item.servico?.nome || '?')}</div>
+                  <div style="font-size:11px;color:var(--text-dim);margin-top:2px">
+                    ${item.quantidade_usada}/${item.quantidade_total} usados
+                  </div>
+                </div>
+                <div style="text-align:right">
+                  <div style="font-family:'Playfair Display';font-size:20px;font-weight:700;color:var(--gold)">${restante}</div>
+                  <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px">disponíveis</div>
+                </div>
+              </button>
+            `;
+          }).join('')}
+        </div>
+      </div>
+    </div>
+  `;
+  modal.classList.add('open');
+}
+
+async function confirmarBaixarUso(itemId, pacoteId, clienteId, servicoNome) {
+  closeModal('baixarUsoModal');
+  // Reusa a função consumirItem que já existe e faz tudo certinho
+  await consumirItem(itemId, pacoteId, clienteId, servicoNome);
+  // Recarrega a lista de pacotes
+  await loadInitialData();
+  renderPacotes();
+}
+
+// ========== ESCOLHER PACOTE (caso cliente tenha vários) ==========
+async function escolherPacotePraBaixar(clienteId) {
+  const { data: pacotes, error } = await sb.from('pacotes')
+    .select('*, cliente:clientes(id, nome), itens:pacote_itens(*, servico:servicos(nome))')
+    .eq('cliente_id', clienteId)
+    .eq('status', 'ATIVO');
+  
+  if (error || !pacotes) {
+    bf.toast('Erro ao carregar pacotes', 'error');
+    return;
+  }
+  
+  // Filtra só os que têm saldo
+  const ativosComSaldo = pacotes.filter(p => 
+    p.itens.some(i => i.quantidade_usada < i.quantidade_total)
+  );
+  
+  if (ativosComSaldo.length === 0) {
+    bf.toast('Esse cliente não tem pacote ativo com saldo', 'info');
+    return;
+  }
+  
+  // Se só tem 1 pacote, vai direto pro modal de baixa
+  if (ativosComSaldo.length === 1) {
+    return abrirBaixarUsoPacote(ativosComSaldo[0].id);
+  }
+  
+  // Múltiplos pacotes: mostra modal pra escolher qual
+  let modal = document.getElementById('escolherPacoteModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'escolherPacoteModal';
+    modal.className = 'modal-overlay';
+    document.body.appendChild(modal);
+  }
+  
+  modal.innerHTML = `
+    <div class="modal" style="max-width:480px">
+      <div class="modal-header">
+        <div>
+          <h2>📦 Qual pacote?</h2>
+          <div class="modal-header-sub">${escapeHtml(ativosComSaldo[0].cliente?.nome || '?')} tem ${ativosComSaldo.length} pacotes ativos</div>
+        </div>
+        <button class="modal-close" onclick="closeModal('escolherPacoteModal')">×</button>
+      </div>
+      <div class="modal-body">
+        <div style="display:grid;gap:10px">
+          ${ativosComSaldo.map(p => {
+            const total = p.itens.reduce((a, i) => a + i.quantidade_total, 0);
+            const usado = p.itens.reduce((a, i) => a + i.quantidade_usada, 0);
+            return `
+              <button 
+                class="btn btn-ghost" 
+                style="display:flex;justify-content:space-between;align-items:center;padding:14px;text-align:left;width:100%"
+                onclick="closeModal('escolherPacoteModal'); abrirBaixarUsoPacote('${p.id}')">
+                <div>
+                  <div style="font-weight:600;font-size:14px">${escapeHtml(p.nome)}</div>
+                  <div style="font-size:11px;color:var(--text-dim);margin-top:2px">${bf.formatBRL(p.valor_total)} · ${usado}/${total} usados</div>
+                </div>
+                <div style="text-align:right">
+                  <div style="font-family:'Playfair Display';font-size:20px;font-weight:700;color:var(--gold)">${total - usado}</div>
+                  <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px">restantes</div>
+                </div>
+              </button>
+            `;
+          }).join('')}
+        </div>
+      </div>
+    </div>
+  `;
+  modal.classList.add('open');
 }
 
 // ========== PACOTE DETAIL VIEW ==========
@@ -6696,11 +6894,14 @@ function openDashDetail(tipo) {
               <span style="color:var(--text-dim);font-size:10px">${horaStr}</span>
             </div>
             <div style="flex:1">
-              <div class="history-title">${escapeHtml(a.cliente?.nome || '?')}</div>
+              <div class="history-title" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                ${escapeHtml(a.cliente?.nome || '?')}
+                ${a.pago_via_pacote ? '<span style="font-size:9px;background:rgba(192,132,252,0.15);color:#c084fc;padding:2px 6px;border-radius:10px;font-weight:600">📦 PACOTE</span>' : ''}
+              </div>
               <div class="history-sub">${escapeHtml(a.servico?.nome || '?')} · ${a.pago_via_pacote ? 'via pacote' : (a.forma_pagamento || 'Avulso')}</div>
             </div>
             <div style="font-size:13px;font-weight:600;color:${a.valor_avulso ? 'var(--gold)' : 'var(--text-dim)'}">
-              ${a.valor_avulso ? bf.formatBRL(a.valor_avulso) : '—'}
+              ${a.valor_avulso ? bf.formatBRL(a.valor_avulso) : (a.pago_via_pacote ? bf.formatBRL(a.servico?.preco || 0) : '—')}
             </div>
           </div>
         `;
@@ -6896,6 +7097,9 @@ window.savePacote = savePacote;
 window.changeQty = changeQty;
 window.selectPagamento = selectPagamento;
 window.consumirItem = consumirItem;
+window.abrirBaixarUsoPacote = abrirBaixarUsoPacote;
+window.confirmarBaixarUso = confirmarBaixarUso;
+window.escolherPacotePraBaixar = escolherPacotePraBaixar;
 window.renderClientes = renderClientes;
 window.logout = logout;
 // Agenda
